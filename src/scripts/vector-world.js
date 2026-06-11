@@ -13,7 +13,10 @@
    mouse aims, W thrusts, S brakes, shift boosts, space / click fires,
    E / right-click launches a missile, enter reads when docked, esc
    releases the stick. Unlocked: the pointer steers gently and clicking a
-   planet opens it. Touch: drag steers; on-screen thrust / fire buttons.
+   planet opens it. Touch (iPad / iPhone / Android): the left half of the
+   screen is a virtual stick (touch down anywhere, drag to steer); the
+   right-thumb cluster has thrust (toggle), boost / brake (hold), fire
+   (hold) and missile (tap). Tapping a planet still opens the article.
 
    Loaded lazily, only while [data-style="vector"] is active. mount() reads
    the post list from the DOM (one source of truth) and returns { unmount }.
@@ -422,8 +425,23 @@ function makeHud(n, modCount) {
     <div class="vh-toasts" data-vh-toasts aria-live="polite"></div>
     <div class="vh-dock" data-vh-dock hidden></div>
     <div class="vh-help" aria-hidden="true">mouse aim · W thrust · shift boost · space fire · E missile · S brake · ↵ read when docked · esc release</div>
-    <div class="vh-overlay" data-vh-overlay><b>❯ take the stick</b><span>click the void to fly · click a planet to read it</span></div>
-    ${coarse ? `<div class="vh-touch"><button data-vt-thrust>▲ thrust</button><button data-vt-fire>✦ fire</button><button data-vt-missile>➤ missile</button></div>` : ''}`;
+    <div class="vh-overlay" data-vh-overlay><b>❯ take the stick</b><span>${
+      coarse
+        ? 'left thumb steers · ▲ engages thrust · tap a planet to read it'
+        : 'click the void to fly · click a planet to read it'
+    }</span></div>
+    ${
+      coarse
+        ? `<div class="vh-stick" data-vh-stick hidden><i></i></div>
+    <div class="vh-cluster">
+      <button type="button" data-vt-missile>➤ missile</button>
+      <button type="button" data-vt-boost>⚡ boost</button>
+      <button type="button" data-vt-brake>■ brake</button>
+      <button type="button" data-vt-thrust>▲ thrust</button>
+      <button type="button" data-vt-fire>✦ fire</button>
+    </div>`
+        : ''
+    }`;
   document.body.append(hud);
 
   const toasts = hud.querySelector('[data-vh-toasts]');
@@ -445,7 +463,7 @@ export function mount() {
   const { signal } = ac;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.5 : 1.75));
   renderer.setSize(innerWidth, innerHeight);
   renderer.domElement.className = 'vector-canvas';
   renderer.domElement.setAttribute('aria-hidden', 'true');
@@ -868,17 +886,61 @@ export function mount() {
 
   /* ----- input ----- */
 
-  let downAt = 0;
-  let downX = 0;
-  let downY = 0;
-  let moved = 0;
+  /* virtual stick (touch): the left ~60% of the screen is the stick zone —
+     touch down anywhere there and drag; x/y are -1..1 steering inputs */
+  const stick = { id: -1, x0: 0, y0: 0, x: 0, y: 0, live: false };
+  const STICK_R = 56;
+
+  /* per-pointer down records so taps survive multi-touch (stick + tap) */
+  const downs = new Map();
 
   function bindWorldInput() {
     const el = renderer.domElement;
     el.style.cursor = 'crosshair';
 
+    /* touch must never feed the mouse-follow steering — a finished tap would
+       leave the ship turning toward a stale point forever */
     const setPointer = (e) => {
+      if (e.pointerType === 'touch') return;
       pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    };
+
+    const stickEl = hud?.querySelector('[data-vh-stick]');
+    const stickNub = stickEl?.querySelector('i');
+    const stickDown = (e) => {
+      if (e.pointerType !== 'touch' || stick.id >= 0 || e.clientX > innerWidth * 0.6)
+        return false;
+      stick.id = e.pointerId;
+      stick.x0 = e.clientX;
+      stick.y0 = e.clientY;
+      stick.x = stick.y = 0;
+      return true;
+    };
+    const stickMove = (e) => {
+      if (e.pointerId !== stick.id) return false;
+      const dx = e.clientX - stick.x0;
+      const dy = e.clientY - stick.y0;
+      const len = Math.hypot(dx, dy);
+      const k = len > STICK_R ? STICK_R / len : 1;
+      stick.x = (dx * k) / STICK_R;
+      stick.y = (dy * k) / STICK_R;
+      /* only materialize the stick once it's clearly a drag, so taps stay taps */
+      if (!stick.live && len > 12 && stickEl) {
+        stick.live = true;
+        stickEl.hidden = false;
+        stickEl.style.left = `${stick.x0}px`;
+        stickEl.style.top = `${stick.y0}px`;
+      }
+      if (stick.live && stickNub) stickNub.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+      return true;
+    };
+    const stickUp = (e) => {
+      if (e.pointerId !== stick.id) return;
+      stick.id = -1;
+      stick.x = stick.y = 0;
+      stick.live = false;
+      if (stickEl) stickEl.hidden = true;
+      if (stickNub) stickNub.style.transform = '';
     };
 
     /* the take-the-stick overlay is a hint, not a gate: any input dismisses
@@ -920,17 +982,24 @@ export function mount() {
       { signal },
     );
 
-    el.addEventListener('pointermove', (e) => { setPointer(e); if (downAt) moved += 2; }, { signal });
+    el.addEventListener(
+      'pointermove',
+      (e) => {
+        if (stickMove(e)) return;
+        setPointer(e);
+        const d = downs.get(e.pointerId);
+        if (d) d.moved += 2;
+      },
+      { signal },
+    );
 
     el.addEventListener(
       'pointerdown',
       (e) => {
         setPointer(e);
         dismissOverlay();
-        downAt = performance.now();
-        downX = e.clientX;
-        downY = e.clientY;
-        moved = 0;
+        downs.set(e.pointerId, { t: performance.now(), x: e.clientX, y: e.clientY, moved: 0 });
+        if (stickDown(e)) return;
         if (pointerLocked) {
           if (e.button === 0) keys.fire = true;
           else if (e.button === 2) fireMissile();
@@ -942,23 +1011,36 @@ export function mount() {
     el.addEventListener(
       'pointerup',
       (e) => {
+        stickUp(e);
+        const d = downs.get(e.pointerId);
+        downs.delete(e.pointerId);
         if (pointerLocked) {
           if (e.button === 0) keys.fire = false;
           return;
         }
-        setPointer(e);
-        const quick = performance.now() - downAt < 350;
-        const still = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) < 9 && moved < 24;
-        downAt = 0;
+        const quick = d && performance.now() - d.t < 350;
+        const still = d && Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 9 && d.moved < 24;
         if (quick && still) {
-          raycaster.setFromCamera(pointer, camera);
+          raycaster.setFromCamera(
+            new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1),
+            camera,
+          );
           const hit = raycaster.intersectObjects(hitTargets, false)[0];
           if (hit) {
             location.href = hit.object.userData.href;
             return;
           }
-          if (!coarse) el.requestPointerLock?.();
+          if (!coarse && e.pointerType !== 'touch') el.requestPointerLock?.();
         }
+      },
+      { signal },
+    );
+
+    el.addEventListener(
+      'pointercancel',
+      (e) => {
+        stickUp(e);
+        downs.delete(e.pointerId);
       },
       { signal },
     );
@@ -1008,15 +1090,35 @@ export function mount() {
       { signal },
     );
 
-    /* touch buttons */
+    /* touch cluster: thrust latches (a thumb can't hold thrust AND fire),
+       boost is hold-to-afterburn and forces thrust on while held */
     const bindHold = (sel, on, off) => {
       const b = hud?.querySelector(sel);
       if (!b) return;
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); on(); }, { signal });
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); dismissOverlay(); on(); }, { signal });
       b.addEventListener('pointerup', () => off?.(), { signal });
       b.addEventListener('pointercancel', () => off?.(), { signal });
     };
-    bindHold('[data-vt-thrust]', () => (keys.thrust = true), () => (keys.thrust = false));
+    const thrustBtn = hud?.querySelector('[data-vt-thrust]');
+    let thrustLatch = false;
+    let boostHeld = false;
+    const syncDrive = () => {
+      keys.thrust = thrustLatch || boostHeld;
+      keys.boost = boostHeld;
+      thrustBtn?.classList.toggle('on', keys.thrust);
+    };
+    thrustBtn?.addEventListener(
+      'pointerdown',
+      (e) => {
+        e.preventDefault();
+        dismissOverlay();
+        thrustLatch = !thrustLatch;
+        syncDrive();
+      },
+      { signal },
+    );
+    bindHold('[data-vt-boost]', () => { boostHeld = true; syncDrive(); }, () => { boostHeld = false; syncDrive(); });
+    bindHold('[data-vt-brake]', () => (keys.brake = true), () => (keys.brake = false));
     bindHold('[data-vt-fire]', () => (keys.fire = true), () => (keys.fire = false));
     bindHold('[data-vt-missile]', () => fireMissile());
 
@@ -1056,6 +1158,10 @@ export function mount() {
         ship.rotateX(-mouseDY * 0.0019 * stats.turn);
         mouseDX = 0;
         mouseDY = 0;
+      } else if (stick.id >= 0 || coarse) {
+        /* virtual stick: right turns right, up pitches up; idle = fly straight */
+        ship.rotateY(-stick.x * 2.2 * stats.turn * dt);
+        ship.rotateX(-stick.y * 1.7 * stats.turn * dt);
       } else {
         const dz = 0.07;
         const yawIn = Math.abs(pointer.x) > dz ? -(pointer.x - Math.sign(pointer.x) * dz) : 0;
@@ -1067,7 +1173,8 @@ export function mount() {
 
       /* visual bank from turn input, hull-only */
       const hull = ship.userData.hull;
-      const bankIn = pointerLocked ? 0 : THREE.MathUtils.clamp(-pointer.x, -0.7, 0.7);
+      const steerX = stick.id >= 0 ? stick.x : coarse ? 0 : pointer.x;
+      const bankIn = pointerLocked ? 0 : THREE.MathUtils.clamp(-steerX, -0.7, 0.7);
       hull.rotation.z = THREE.MathUtils.lerp(hull.rotation.z, bankIn, 1 - Math.exp(-dt * 4));
 
       /* --- thrust / boost / fuel --- */

@@ -36,7 +36,9 @@ core is the sun, every post is a wireframe planet (one moon per tag, amber if
 draft). Click the void to take the stick (pointer lock) — mouse aims, `W` thrusts,
 `shift` boosts, `space`/click fires lasers with target lead, `E`/right-click sends
 a homing missile at the auto-locked asteroid, `S` brakes, `A`/`D` roll, `esc`
-releases. An asteroid belt drifts between the orbits; rocks drop scrap, impacts
+releases. On touch screens (iPad / iPhone / Android) the left half of the screen
+is a virtual stick and a right-thumb cluster handles thrust (toggle), boost,
+brake, fire and missiles — tapping a planet still opens it. An asteroid belt drifts between the orbits; rocks drop scrap, impacts
 cost hull, docking at a planet repairs. Click a planet (or dock and press `↵`) to
 open the article — and **reading an article installs a visible ship component**:
 twin cannons, afterburner, missile pods, deflector ring, swept wings, gilded hull.

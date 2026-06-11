@@ -379,29 +379,95 @@
   color: oklch(71% 0.09 155);
 }
 
-/* touch controls */
-.vector-hud .vh-touch {
+/* ----- touch controls (iPad / iPhone / Android) ----- */
+
+/* right-thumb cluster */
+.vector-hud .vh-cluster {
   position: absolute;
-  bottom: 4.6rem;
-  right: 1rem;
+  right: calc(0.9rem + env(safe-area-inset-right, 0px));
+  bottom: calc(0.9rem + env(safe-area-inset-bottom, 0px));
   display: grid;
+  grid-template-columns: repeat(2, minmax(5rem, 1fr));
   gap: 0.5rem;
   pointer-events: auto;
 }
 
-.vector-hud .vh-touch button {
+.vector-hud .vh-cluster button {
   font-family: 'VT323', monospace;
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   letter-spacing: 0.05em;
-  padding: 0.7rem 1.1rem;
+  padding: 0.8rem 0.9rem;
+  min-height: 3rem; /* comfortable thumb target */
   color: oklch(87% 0.21 155);
-  background: oklch(10% 0.02 165 / 0.8);
+  background: oklch(10% 0.02 165 / 0.78);
   border: 1px solid oklch(87% 0.21 155 / 0.5);
   touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.vector-hud .vh-touch button:active {
-  background: oklch(87% 0.21 155 / 0.2);
+.vector-hud .vh-cluster button[data-vt-missile] {
+  grid-column: 1 / -1;
+  color: oklch(82% 0.13 75);
+  border-color: oklch(82% 0.13 75 / 0.5);
+}
+
+.vector-hud .vh-cluster button:active {
+  background: oklch(87% 0.21 155 / 0.22);
+}
+
+.vector-hud .vh-cluster button.on {
+  background: oklch(87% 0.21 155 / 0.18);
+  text-shadow: var(--vec-glow);
+  box-shadow: 0 0 16px -4px oklch(87% 0.21 155 / 0.6), inset 0 0 10px oklch(87% 0.21 155 / 0.15);
+}
+
+/* virtual stick — appears under the left thumb once a drag starts */
+.vector-hud .vh-stick {
+  position: fixed;
+  width: 128px;
+  height: 128px;
+  transform: translate(-50%, -50%);
+  border: 1px solid oklch(87% 0.21 155 / 0.45);
+  border-radius: 50%;
+  background: oklch(87% 0.21 155 / 0.05);
+  box-shadow: inset 0 0 24px oklch(87% 0.21 155 / 0.08);
+}
+
+.vector-hud .vh-stick[hidden] {
+  display: none;
+}
+
+.vector-hud .vh-stick i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border: 1px solid oklch(87% 0.21 155 / 0.8);
+  border-radius: 50%;
+  background: oklch(87% 0.21 155 / 0.16);
+  box-shadow: 0 0 14px oklch(87% 0.21 155 / 0.4);
+}
+
+@media (pointer: coarse) {
+  /* the overlay explains touch; the keyboard legend is noise */
+  .vector-hud .vh-help {
+    display: none;
+  }
+
+  /* keep the dock card clear of the right-thumb cluster */
+  .vector-hud .vh-dock {
+    left: calc(0.9rem + env(safe-area-inset-left, 0px));
+    right: auto;
+    transform: none;
+    bottom: calc(0.9rem + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100vw - 13.5rem);
+    text-align: left;
+    font-size: 1.05rem;
+  }
 }
 
 /* return chip on article pages */

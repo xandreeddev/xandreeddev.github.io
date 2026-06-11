@@ -9,3 +9,4 @@ dist/
 # local working notes & review screenshots (root only — public/ assets are tracked)
 /*.png
 /PROMPT.md
+.serena/
