@@ -4,8 +4,8 @@
    The default style is PHOSPHOR: terminal editorial. Dark-first, warm
    near-black, one phosphor-amber accent. Serif prose (Newsreader), mono
    chrome (JetBrains Mono). It lives on :root so the site renders complete
-   without JS; the other styles (gazette, aurora, zine, system) override the
-   token contract + signature moves under [data-style="…"].
+   without JS; the other styles (gazette, aurora, zine, system, vector)
+   override the token contract + signature moves under [data-style="…"].
 
    Token contract every style must satisfy:
      colors   --bg --surface --surface-2 --border --text --text-2 --text-3
@@ -13,6 +13,8 @@
      fonts    --font-body --font-display --font-mono
      shape    --radius-s --radius-m --border-w
      display  --display-weight
+     also     color-scheme, the .brand-mark::before / .sw-glyph::before glyph,
+              and (light themes) the .astro-code --shiki-light flip
 --------------------------------------------------------------------------- */
 
 :root {

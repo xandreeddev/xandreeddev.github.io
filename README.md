@@ -16,7 +16,7 @@ and turns the homepage into a flyable star system.
 - [Shiki](https://shiki.style) dual-theme highlighting with diff/highlight notations
 - [Bun](https://bun.sh) for everything
 
-## Five design systems, one switcher
+## Six design systems, one switcher
 
 The header switcher swaps the entire visual identity live — typography, layout,
 decoration, motion — not just a palette. Choice persists in `localStorage`; first
