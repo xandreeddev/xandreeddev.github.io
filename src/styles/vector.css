@@ -160,29 +160,269 @@
   color: oklch(53% 0.07 155);
 }
 
-.vector-hud .vh-caption {
+/* crosshair — only while the stick is taken */
+.vector-hud .vh-cross {
   position: absolute;
-  bottom: 2.9rem;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+  display: none;
+}
+
+.vector-hud.locked .vh-cross {
+  display: block;
+}
+
+.vector-hud .vh-cross::before,
+.vector-hud .vh-cross::after {
+  content: '';
+  position: absolute;
+  background: oklch(87% 0.21 155 / 0.85);
+  box-shadow: 0 0 6px oklch(87% 0.21 155 / 0.6);
+}
+
+.vector-hud .vh-cross::before {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  clip-path: polygon(0 0, 100% 0, 100% 32%, 0 32%, 0 68%, 100% 68%, 100% 100%, 0 100%);
+}
+
+.vector-hud .vh-cross::after {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  clip-path: polygon(0 0, 32% 0, 32% 100%, 0 100%, 68% 0, 100% 0, 100% 100%, 68% 100%);
+}
+
+/* hull / boost bars */
+.vector-hud .vh-bars {
+  position: absolute;
+  top: 4.2rem;
+  left: 1.2rem;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+}
+
+.vector-hud .vh-bar-row {
+  display: grid;
+  grid-template-columns: 3.2rem 11rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.vector-hud .vh-bar {
+  height: 0.55rem;
+  border: 1px solid oklch(87% 0.21 155 / 0.45);
+  background: oklch(87% 0.21 155 / 0.07);
+}
+
+.vector-hud .vh-bar i {
+  display: block;
+  height: 100%;
+  background: oklch(87% 0.21 155 / 0.8);
+  box-shadow: 0 0 8px oklch(87% 0.21 155 / 0.5);
+  transition: width 0.15s linear;
+}
+
+.vector-hud .vh-bar i.low {
+  background: oklch(65% 0.22 25 / 0.9);
+  box-shadow: 0 0 8px oklch(65% 0.22 25 / 0.6);
+}
+
+.vector-hud .vh-bar.boost i {
+  background: oklch(72% 0.24 340 / 0.8);
+  box-shadow: 0 0 8px oklch(72% 0.24 340 / 0.5);
+}
+
+.vector-hud .vh-stats {
+  margin-top: 0.15rem;
+  font-size: 1rem;
+  color: oklch(71% 0.09 155);
+}
+
+/* lock readout, near the crosshair */
+.vector-hud .vh-lock {
+  position: absolute;
+  top: calc(50% + 2.2rem);
   left: 50%;
   transform: translateX(-50%);
-  max-width: min(46rem, 86vw);
-  text-align: center;
-  font-size: 1.2rem;
-  line-height: 1.35;
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
   color: oklch(72% 0.24 340);
   text-shadow: 0 0 10px oklch(72% 0.24 340 / 0.45);
   opacity: 0;
-  transition: opacity 0.18s ease;
+  transition: opacity 0.15s ease;
 }
 
-.vector-hud .vh-caption.on {
+.vector-hud .vh-lock.on {
   opacity: 1;
 }
 
-.vector-hud .vh-caption b {
-  font-weight: 400;
+/* dock card */
+.vector-hud .vh-dock {
+  pointer-events: auto;
+  cursor: pointer;
+  position: absolute;
+  bottom: 3.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(46rem, 88vw);
+  text-align: center;
+  font-size: 1.25rem;
+  line-height: 1.4;
+  padding: 0.7rem 1.3rem;
   color: oklch(93% 0.05 155);
-  text-shadow: 0 0 10px oklch(87% 0.21 155 / 0.6);
+  background: oklch(10% 0.02 165 / 0.85);
+  border: 1px solid oklch(87% 0.21 155 / 0.45);
+  box-shadow: 0 0 30px -10px oklch(87% 0.21 155 / 0.5);
+}
+
+.vector-hud .vh-dock b {
+  font-weight: 400;
+  color: oklch(87% 0.21 155);
+  text-shadow: var(--vec-glow);
+}
+
+.vector-hud .vh-dock span {
+  font-size: 0.95rem;
+  color: oklch(71% 0.09 155);
+}
+
+/* toasts */
+.vector-hud .vh-toasts {
+  position: absolute;
+  top: 8.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 0.3rem;
+  justify-items: center;
+}
+
+.vh-toast {
+  font-family: 'VT323', monospace;
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.9rem;
+  color: oklch(93% 0.05 155);
+  background: oklch(10% 0.02 165 / 0.85);
+  border: 1px solid oklch(87% 0.21 155 / 0.4);
+  animation: vh-toast-in 0.18s ease-out;
+}
+
+.vh-toast.ok {
+  color: oklch(87% 0.21 155);
+}
+
+.vh-toast.warn {
+  color: oklch(82% 0.13 75);
+  border-color: oklch(82% 0.13 75 / 0.4);
+}
+
+.vh-toast.bad {
+  color: oklch(70% 0.22 25);
+  border-color: oklch(70% 0.22 25 / 0.5);
+}
+
+.vh-toast.vh-solo {
+  position: fixed;
+  top: 4.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+
+@keyframes vh-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* take-the-stick overlay */
+.vector-hud .vh-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 0.3rem;
+  justify-items: center;
+  text-align: center;
+  padding: 1rem 1.8rem;
+  background: oklch(8% 0.016 165 / 0.7);
+  border: 1px solid oklch(87% 0.21 155 / 0.35);
+  transition: opacity 0.25s ease;
+}
+
+.vector-hud .vh-overlay.hidden {
+  opacity: 0;
+}
+
+.vector-hud .vh-overlay b {
+  font-weight: 400;
+  font-size: 1.6rem;
+  color: oklch(87% 0.21 155);
+  text-shadow: var(--vec-glow);
+}
+
+.vector-hud .vh-overlay span {
+  font-size: 1.05rem;
+  color: oklch(71% 0.09 155);
+}
+
+/* touch controls */
+.vector-hud .vh-touch {
+  position: absolute;
+  bottom: 4.6rem;
+  right: 1rem;
+  display: grid;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+
+.vector-hud .vh-touch button {
+  font-family: 'VT323', monospace;
+  font-size: 1.2rem;
+  letter-spacing: 0.05em;
+  padding: 0.7rem 1.1rem;
+  color: oklch(87% 0.21 155);
+  background: oklch(10% 0.02 165 / 0.8);
+  border: 1px solid oklch(87% 0.21 155 / 0.5);
+  touch-action: none;
+}
+
+.vector-hud .vh-touch button:active {
+  background: oklch(87% 0.21 155 / 0.2);
+}
+
+/* return chip on article pages */
+.vh-return {
+  position: fixed;
+  top: 4.4rem;
+  left: 1.2rem;
+  z-index: 5;
+  font-family: 'VT323', monospace;
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0.8rem;
+  color: oklch(87% 0.21 155);
+  text-decoration: none;
+  background: oklch(10% 0.02 165 / 0.85);
+  border: 1px solid oklch(87% 0.21 155 / 0.4);
+}
+
+.vh-return:hover {
+  color: oklch(93% 0.05 155);
+  text-shadow: var(--vec-glow);
+  box-shadow: 0 0 20px -6px oklch(87% 0.21 155 / 0.5);
 }
 
 @media (max-width: 640px) {

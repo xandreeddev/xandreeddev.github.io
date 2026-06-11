@@ -31,14 +31,19 @@ visit follows `prefers-color-scheme` (dark → phosphor, light → gazette).
 | system   | retro desk         | Silkscreen · Chivo · Fragment |
 | vector   | context overworld  | VT323 · JetBrains Mono        |
 
-In **vector**, the blog is efferent's context tree as a star system: the core is the
-sun, every post is a wireframe planet (one moon per tag, amber if draft), and you
-pilot a little vector ship — aim with the pointer, hold click or `W` to thrust,
-`shift` boosts, scroll fires a burst. Click a planet (or dock and press `↵`) to open
-the article; article pages keep a quiet ambient field behind a readable HUD panel.
-The world reads the post list straight from the DOM, mounts/unmounts live with the
-switcher, and the other styles never pay for it. No WebGL? The CRT fallback is a
-complete theme on its own.
+In **vector**, the blog is efferent's context tree as a star system you fly: the
+core is the sun, every post is a wireframe planet (one moon per tag, amber if
+draft). Click the void to take the stick (pointer lock) — mouse aims, `W` thrusts,
+`shift` boosts, `space`/click fires lasers with target lead, `E`/right-click sends
+a homing missile at the auto-locked asteroid, `S` brakes, `A`/`D` roll, `esc`
+releases. An asteroid belt drifts between the orbits; rocks drop scrap, impacts
+cost hull, docking at a planet repairs. Click a planet (or dock and press `↵`) to
+open the article — and **reading an article installs a visible ship component**:
+twin cannons, afterburner, missile pods, deflector ring, swept wings, gilded hull.
+Article pages keep a quiet ambient field behind a readable HUD panel, with a
+"return to system" chip (`esc` works too). The world reads the post list straight
+from the DOM, mounts/unmounts live with the switcher, and the other styles never
+pay for it. No WebGL? The CRT fallback is a complete theme on its own.
 
 Each style is one CSS file in `src/styles/` that overrides a token contract
 (colors, fonts, radii, border weight) plus its own signature moves under

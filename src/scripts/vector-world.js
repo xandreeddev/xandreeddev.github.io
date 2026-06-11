@@ -1,10 +1,19 @@
 /* ---------------------------------------------------------------------------
    VECTOR — the context overworld.
 
-   The blog as a star system. The efferent core is the sun; every post is a
-   wireframe planet (a ring for flair, one moon per tag, amber if draft).
-   You pilot a little vector ship: aim with the pointer, hold to thrust,
-   click a planet — or dock close and press enter — to open the article.
+   The blog as a star system you fly. The efferent core is the sun; every
+   post is a wireframe planet. Reading an article installs a visible ship
+   component (twin cannons, afterburner, missile pods, deflector, swept
+   wings, gilded hull). An asteroid belt drifts between the orbits: lasers
+   with target lead, homing missiles, auto-lock, scrap, hull damage, and
+   docking repairs. Article pages keep an ambient field, a "return to
+   system" chip, and esc flies you home.
+
+   Controls (desktop): click the void to take the stick (pointer lock) —
+   mouse aims, W thrusts, S brakes, shift boosts, space / click fires,
+   E / right-click launches a missile, enter reads when docked, esc
+   releases the stick. Unlocked: the pointer steers gently and clicking a
+   planet opens it. Touch: drag steers; on-screen thrust / fire buttons.
 
    Loaded lazily, only while [data-style="vector"] is active. mount() reads
    the post list from the DOM (one source of truth) and returns { unmount }.
@@ -25,6 +34,48 @@ const BG = 0x020806;
 const PALETTE = [GREEN, CYAN, MAGENTA, AMBER];
 
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const coarse = matchMedia('(pointer: coarse)').matches;
+
+const VISITED_KEY = 'vector-visited';
+const SCRAP_KEY = 'vector-scrap';
+
+const MODS = [
+  { id: 'twin', name: 'twin cannons', desc: 'a second laser muzzle' },
+  { id: 'burner', name: 'afterburner', desc: 'hotter boost, faster fuel regen' },
+  { id: 'pods', name: 'missile pods', desc: '+2 missiles, faster reload' },
+  { id: 'shield', name: 'deflector ring', desc: '+40 hull, half impact damage' },
+  { id: 'wings', name: 'swept wings', desc: '+30% turn rate' },
+  { id: 'gold', name: 'gilded hull', desc: '+12 top speed' },
+];
+
+const store = {
+  visited() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(VISITED_KEY) ?? '[]'));
+    } catch {
+      return new Set();
+    }
+  },
+  visit(slug) {
+    const v = this.visited();
+    const fresh = !v.has(slug);
+    v.add(slug);
+    try {
+      localStorage.setItem(VISITED_KEY, JSON.stringify([...v]));
+    } catch {}
+    return fresh;
+  },
+  scrap(delta = 0) {
+    let n = 0;
+    try {
+      n = Math.max(0, (parseInt(localStorage.getItem(SCRAP_KEY) ?? '0', 10) || 0) + delta);
+      localStorage.setItem(SCRAP_KEY, String(n));
+    } catch {}
+    return n;
+  },
+};
+
+const slugOf = (href) => href?.match(/\/posts\/([^/]+)\/?/)?.[1] ?? null;
 
 /* ----- DOM data: the post list is the single source of truth ----- */
 
@@ -35,16 +86,17 @@ function readPosts() {
     clone.querySelector('.draft-badge')?.remove();
     return {
       href: row.getAttribute('href'),
+      slug: slugOf(row.getAttribute('href')),
       title: clone.textContent.trim().replace(/\s+/g, ' '),
       desc: row.querySelector('.desc')?.textContent.trim() ?? '',
       date: row.querySelector('time')?.textContent.trim() ?? '',
-      tags: 1 + (row.querySelector('.desc')?.textContent.length ?? 0) % 3,
+      moons: 1 + ((row.querySelector('.desc')?.textContent.length ?? 0) % 3),
       draft: !!titleEl.querySelector('.draft-badge'),
     };
   });
 }
 
-/* ----- canvas-texture label sprites (VT323 phosphor) ----- */
+/* ----- textures & materials ----- */
 
 function textSprite(lines, { size = 72, color = '#46ffa0', dim = '#9fffd0' } = {}) {
   const c = document.createElement('canvas');
@@ -70,6 +122,31 @@ function textSprite(lines, { size = 72, color = '#46ffa0', dim = '#9fffd0' } = {
   );
   s.scale.set(26, 6.5, 1);
   return s;
+}
+
+function glowTexture(color) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, color);
+  g.addColorStop(0.25, color + '55');
+  g.addColorStop(1, 'transparent');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function wireMat(color, opacity = 0.55) {
+  return new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
 }
 
 /* ----- scene furniture ----- */
@@ -100,14 +177,13 @@ function makeStars(count, inner, outer) {
   );
 }
 
-function wireMat(color, opacity = 0.55) {
-  return new THREE.LineBasicMaterial({
-    color,
-    transparent: true,
-    opacity,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
+function makeGrid() {
+  const grid = new THREE.GridHelper(900, 70, GREEN_DIM, GREEN_DIM);
+  grid.material.transparent = true;
+  grid.material.opacity = 0.13;
+  grid.material.depthWrite = false;
+  grid.position.y = -42;
+  return grid;
 }
 
 function makeCore(scale = 1) {
@@ -135,53 +211,32 @@ function makeCore(scale = 1) {
   return core;
 }
 
-function glowTexture(color) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  g.addColorStop(0, color);
-  g.addColorStop(0.25, color + '55');
-  g.addColorStop(1, 'transparent');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
+/* ----- the ship: hull built from installed mods ----- */
 
-function makeGrid() {
-  const grid = new THREE.GridHelper(900, 70, GREEN_DIM, GREEN_DIM);
-  grid.material.transparent = true;
-  grid.material.opacity = 0.13;
-  grid.material.depthWrite = false;
-  grid.position.y = -42;
-  return grid;
-}
-
-/* ----- the ship ----- */
-
-function makeShip() {
+function makeShip(mods) {
   const ship = new THREE.Group();
+  const hull = new THREE.Group();
 
   const fuselage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.ConeGeometry(0.55, 2.4, 4)),
-    wireMat(GREEN, 0.95),
+    wireMat(mods.has('gold') ? AMBER : GREEN, 0.95),
   );
   fuselage.rotation.x = -Math.PI / 2; // nose toward -z
 
-  const wing = (sx) => {
-    const g = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(sx * 1.9, -0.08, 1.0),
-      new THREE.Vector3(sx * 0.25, 0, -0.7),
-      new THREE.Vector3(sx * 0.25, 0, 1.05),
-    ]);
-    return new THREE.LineLoop(g, wireMat(MAGENTA, 0.95));
-  };
+  const wingScale = mods.has('wings') ? 1.35 : 1;
+  const wing = (sx) =>
+    new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(sx * 1.9 * wingScale, -0.08, 1.0),
+        new THREE.Vector3(sx * 0.25, 0, -0.7),
+        new THREE.Vector3(sx * 0.25, 0, 1.05),
+      ]),
+      wireMat(MAGENTA, 0.95),
+    );
 
   const exhaust = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: glowTexture('#ff5fd2'),
+      map: glowTexture(mods.has('burner') ? '#ffc46a' : '#ff5fd2'),
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
@@ -189,28 +244,97 @@ function makeShip() {
     }),
   );
   exhaust.position.set(0, 0, 1.6);
-  exhaust.scale.setScalar(2.2);
+  exhaust.scale.setScalar(mods.has('burner') ? 3.1 : 2.2);
 
-  /* visuals live on an inner hull so banking stays cosmetic and never
-     pollutes the flight quaternion */
-  const hull = new THREE.Group();
   hull.add(fuselage, wing(1), wing(-1), exhaust);
+
+  /* visible components */
+  const muzzles = [];
+  if (mods.has('twin')) {
+    for (const sx of [1, -1]) {
+      const m = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.12, 0.12, 0.9)),
+        wireMat(CYAN, 0.9),
+      );
+      m.position.set(sx * 1.55 * wingScale, 0, 0.35);
+      hull.add(m);
+      muzzles.push(new THREE.Vector3(sx * 1.55 * wingScale, 0, -0.2));
+    }
+  } else {
+    muzzles.push(new THREE.Vector3(0, -0.1, -1.4));
+  }
+
+  if (mods.has('pods')) {
+    for (const sx of [1, -1]) {
+      const pod = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.26, 0.2, 1.1)),
+        wireMat(AMBER, 0.8),
+      );
+      pod.position.set(sx * 0.85 * wingScale, -0.22, 0.55);
+      hull.add(pod);
+    }
+  }
+
+  let shieldRing = null;
+  if (mods.has('shield')) {
+    shieldRing = new THREE.LineSegments(
+      new THREE.WireframeGeometry(new THREE.TorusGeometry(2.5, 0.02, 3, 48)),
+      wireMat(CYAN, 0.35),
+    );
+    shieldRing.rotation.x = Math.PI / 2;
+    hull.add(shieldRing);
+  }
+
   ship.add(hull);
-  ship.userData = { exhaust, hull };
+  ship.userData = { exhaust, hull, muzzles, shieldRing };
   return ship;
 }
 
-/* ----- HUD (plain DOM, styled by vector.css) ----- */
+/* ----- asteroids ----- */
 
-function makeHud(n) {
+function jitter(geo, seed) {
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i);
+    const y = p.getY(i);
+    const z = p.getZ(i);
+    const h = Math.abs(Math.sin(x * 12.9 + y * 78.2 + z * 37.7 + seed) * 43758.5) % 1;
+    const s = 0.78 + h * 0.5;
+    p.setXYZ(i, x * s, y * s, z * s);
+  }
+  p.needsUpdate = true;
+  return geo;
+}
+
+/* ----- HUD ----- */
+
+function makeHud(n, modCount) {
   const hud = document.createElement('div');
   hud.className = 'vector-hud';
-  hud.setAttribute('aria-hidden', 'true');
   hud.innerHTML = `
-    <div class="vh-top" data-vh-top>system xandreed · ${n} planets</div>
-    <div class="vh-caption" data-vh-caption></div>
-    <div class="vh-help">aim with the pointer · hold click or W to thrust · scroll = burst · click a planet (or dock + ↵) to read</div>`;
+    <div class="vh-cross" aria-hidden="true"></div>
+    <div class="vh-bars" aria-hidden="true">
+      <div class="vh-bar-row"><span>hull</span><div class="vh-bar"><i data-vh-hp style="width:100%"></i></div></div>
+      <div class="vh-bar-row"><span>boost</span><div class="vh-bar boost"><i data-vh-boost style="width:100%"></i></div></div>
+      <div class="vh-stats" data-vh-stats>v 0 · ◆ 0 · ➤ 0 · mods ${modCount}/${MODS.length}</div>
+    </div>
+    <div class="vh-top" data-vh-top aria-hidden="true">system xandreed · ${n} planets</div>
+    <div class="vh-lock" data-vh-lock aria-hidden="true"></div>
+    <div class="vh-toasts" data-vh-toasts aria-live="polite"></div>
+    <div class="vh-dock" data-vh-dock hidden></div>
+    <div class="vh-help" aria-hidden="true">mouse aim · W thrust · shift boost · space fire · E missile · S brake · ↵ read when docked · esc release</div>
+    <div class="vh-overlay" data-vh-overlay><b>❯ take the stick</b><span>click the void to fly · click a planet to read it</span></div>
+    ${coarse ? `<div class="vh-touch"><button data-vt-thrust>▲ thrust</button><button data-vt-fire>✦ fire</button><button data-vt-missile>➤ missile</button></div>` : ''}`;
   document.body.append(hud);
+
+  const toasts = hud.querySelector('[data-vh-toasts]');
+  hud.toast = (msg, cls = '') => {
+    const t = document.createElement('div');
+    t.className = `vh-toast ${cls}`;
+    t.textContent = msg;
+    toasts.append(t);
+    setTimeout(() => t.remove(), 3000);
+  };
   return hud;
 }
 
@@ -246,27 +370,59 @@ export function mount() {
   const clock = new THREE.Clock();
   let core = null;
 
-  /* world state */
+  const posts = isWorld ? readPosts() : [];
+  const visited = store.visited();
+  const mods = new Set();
+  posts.forEach((p, i) => {
+    if (p.slug && visited.has(p.slug)) mods.add(MODS[i % MODS.length].id);
+  });
+
+  /* derived ship stats */
+  const stats = {
+    maxHp: 100 + (mods.has('shield') ? 40 : 0),
+    turn: mods.has('wings') ? 1.3 : 1,
+    vmax: 60 + (mods.has('gold') ? 12 : 0),
+    boostAcc: mods.has('burner') ? 86 : 64,
+    fuelRegen: mods.has('burner') ? 30 : 18,
+    impactScale: mods.has('shield') ? 0.5 : 1,
+    maxMissiles: mods.has('pods') ? 6 : 3,
+    missileReload: mods.has('pods') ? 3 : 6,
+  };
+
+  /* live state */
   const planets = [];
   const hitTargets = [];
+  const asteroids = [];
+  const bolts = [];
+  const missiles = [];
+  const booms = [];
   let ship = null;
-  let vel = new THREE.Vector3();
-  let thrustKey = false;
-  let thrustPointer = false;
-  let brakeKey = false;
-  let boost = false;
+  const vel = new THREE.Vector3();
+  let hp = stats.maxHp;
+  let fuel = 100;
+  let scrap = store.scrap(0);
+  let missileStock = stats.maxMissiles;
+  let missileTimer = 0;
+  let fireTimer = 0;
+  let invuln = 0;
+  let shake = 0;
   let docked = -1;
+  let lockIdx = -1;
+  let lockReticle = null;
+  let pointerLocked = false;
+  let mouseDX = 0;
+  let mouseDY = 0;
+  const keys = { thrust: false, brake: false, boost: false, fire: false, roll: 0 };
   const pointer = new THREE.Vector2(0, 0);
   const raycaster = new THREE.Raycaster();
 
-  const posts = isWorld ? readPosts() : [];
+  /* ----- builders ----- */
 
-  function makePlanet(post, i, n) {
+  function makePlanet(post, i) {
     const group = new THREE.Group();
     const color = post.draft ? AMBER : PALETTE[i % PALETTE.length];
     const radius = 5.5 + ((i * 7) % 3);
 
-    /* occluder so back lines vanish — feels solid */
     const occluder = new THREE.Mesh(
       new THREE.SphereGeometry(radius * 0.97, 24, 16),
       new THREE.MeshBasicMaterial({ color: BG }),
@@ -275,18 +431,15 @@ export function mount() {
       new THREE.WireframeGeometry(new THREE.SphereGeometry(radius, 14, 9)),
       wireMat(color, 0.55),
     );
-
     const ring = new THREE.LineSegments(
       new THREE.WireframeGeometry(new THREE.TorusGeometry(radius * 1.7, 0.04, 4, 64)),
       wireMat(i % 2 ? MAGENTA : GREEN_DIM, i % 2 ? 0.5 : 0.8),
     );
     ring.rotation.x = Math.PI / 2 + (((i * 13) % 10) - 5) * 0.06;
-
     group.add(occluder, wire, ring);
 
-    /* one moon per tag-ish */
     const moons = [];
-    for (let m = 0; m < post.tags; m++) {
+    for (let m = 0; m < post.moons; m++) {
       const moon = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.SphereGeometry(0.7, 6, 4)),
         wireMat(0x9fffd0, 0.5),
@@ -294,19 +447,20 @@ export function mount() {
       moon.userData = {
         orbit: radius * 2 + 2 + m * 2.2,
         speed: 0.25 + m * 0.12,
-        phase: (m * Math.PI * 2) / post.tags,
+        phase: (m * Math.PI * 2) / post.moons,
       };
       group.add(moon);
       moons.push(moon);
     }
 
-    const label = textSprite([post.title, `${post.date}${post.draft ? ' · draft' : ''}`], {
-      color: post.draft ? '#ffc46a' : '#46ffa0',
-    });
+    const done = post.slug && visited.has(post.slug);
+    const label = textSprite(
+      [post.title, `${post.date}${post.draft ? ' · draft' : ''}${done ? ' · ✓' : ''}`],
+      { color: post.draft ? '#ffc46a' : done ? '#9fffd0' : '#46ffa0' },
+    );
     label.position.y = radius + 7;
     group.add(label);
 
-    /* generous invisible click target */
     const hit = new THREE.Mesh(
       new THREE.SphereGeometry(radius * 2.4, 8, 6),
       new THREE.MeshBasicMaterial({ visible: false }),
@@ -315,30 +469,190 @@ export function mount() {
     group.add(hit);
     hitTargets.push(hit);
 
-    /* placement: a loose spiral around the core, newest closest */
     const angle = i * 2.4 + 0.9;
     const dist = 70 + i * 34;
-    group.position.set(
-      Math.cos(angle) * dist,
-      Math.sin(i * 1.9) * 12,
-      Math.sin(angle) * dist,
-    );
+    group.position.set(Math.cos(angle) * dist, Math.sin(i * 1.9) * 12, Math.sin(angle) * dist);
 
     scene.add(group);
-    planets.push({ group, wire, ring, label, moons, post, radius, baseOpacity: 0.55 });
+    planets.push({ group, wire, ring, label, moons, post, radius, mod: MODS[i % MODS.length] });
+  }
+
+  function spawnAsteroid(awayFromShip = false) {
+    const radius = 1.6 + Math.random() * 2.6;
+    const geo = jitter(new THREE.IcosahedronGeometry(radius, 0), Math.random() * 100);
+    const rock = new THREE.Group();
+    rock.add(
+      new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 0.62, 8, 6),
+        new THREE.MeshBasicMaterial({ color: BG }),
+      ),
+      new THREE.LineSegments(new THREE.WireframeGeometry(geo), wireMat(0x8de8b8, 0.5)),
+    );
+    const band = 105 + Math.random() * 95;
+    let a = Math.random() * Math.PI * 2;
+    if (awayFromShip && ship) {
+      for (let tries = 0; tries < 8; tries++) {
+        const p = new THREE.Vector3(Math.cos(a) * band, 0, Math.sin(a) * band);
+        if (p.distanceTo(ship.position) > 90) break;
+        a = Math.random() * Math.PI * 2;
+      }
+    }
+    rock.position.set(Math.cos(a) * band, (Math.random() - 0.5) * 30, Math.sin(a) * band);
+    rock.userData = {
+      vel: new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(1.5 + Math.random() * 2),
+      spin: new THREE.Vector3(Math.random(), Math.random(), Math.random()).multiplyScalar(0.6),
+      radius,
+      hp: Math.ceil(radius),
+    };
+    scene.add(rock);
+    asteroids.push(rock);
+  }
+
+  function makeBoltPool(n) {
+    for (let i = 0; i < n; i++) {
+      const arr = new Float32Array(6);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      const line = new THREE.Line(geo, wireMat(GREEN, 1));
+      line.visible = false;
+      line.frustumCulled = false;
+      scene.add(line);
+      bolts.push({ line, arr, pos: new THREE.Vector3(), dir: new THREE.Vector3(), life: 0 });
+    }
+  }
+
+  function makeBoomPool(n) {
+    for (let i = 0; i < n; i++) {
+      const count = 30;
+      const arr = new Float32Array(count * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      const mat = new THREE.PointsMaterial({
+        color: AMBER,
+        size: 0.9,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const points = new THREE.Points(geo, mat);
+      points.visible = false;
+      points.frustumCulled = false;
+      scene.add(points);
+      booms.push({ points, arr, vels: new Float32Array(count * 3), life: 0 });
+    }
+  }
+
+  function explode(pos, color = AMBER) {
+    const b = booms.find((x) => x.life <= 0) ?? booms[0];
+    for (let i = 0; i < b.arr.length; i += 3) {
+      b.arr[i] = pos.x;
+      b.arr[i + 1] = pos.y;
+      b.arr[i + 2] = pos.z;
+      const v = new THREE.Vector3().randomDirection().multiplyScalar(8 + Math.random() * 20);
+      b.vels[i] = v.x;
+      b.vels[i + 1] = v.y;
+      b.vels[i + 2] = v.z;
+    }
+    b.points.material.color.set(color);
+    b.points.geometry.attributes.position.needsUpdate = true;
+    b.points.visible = true;
+    b.life = 1;
+  }
+
+  function fireLasers() {
+    if (fireTimer > 0 || !ship) return;
+    fireTimer = 0.15;
+    const { muzzles } = ship.userData;
+    /* aim: locked target with lead, else straight ahead */
+    let aimPoint = null;
+    if (lockIdx >= 0 && asteroids[lockIdx]) {
+      const tgt = asteroids[lockIdx];
+      const d = tgt.position.distanceTo(ship.position);
+      aimPoint = tgt.position.clone().addScaledVector(tgt.userData.vel, d / 220);
+    }
+    for (const m of muzzles) {
+      const b = bolts.find((x) => x.life <= 0);
+      if (!b) return;
+      b.pos.copy(m).applyQuaternion(ship.quaternion).add(ship.position);
+      if (aimPoint) b.dir.copy(aimPoint).sub(b.pos).normalize();
+      else b.dir.set(0, 0, -1).applyQuaternion(ship.quaternion);
+      b.life = 1.1;
+      b.line.visible = true;
+    }
+  }
+
+  function fireMissile() {
+    if (!ship || missileStock <= 0 || lockIdx < 0 || !asteroids[lockIdx]) {
+      if (hud && missileStock <= 0) hud.toast('no missiles — scrap rebuilds them', 'warn');
+      else if (hud && lockIdx < 0) hud.toast('no lock — face an asteroid', 'warn');
+      return;
+    }
+    missileStock--;
+    const g = new THREE.Group();
+    const body = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: glowTexture('#ffc46a'),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    body.scale.setScalar(1.6);
+    g.add(body);
+    g.position.copy(ship.position).add(new THREE.Vector3(0, -0.6, 0).applyQuaternion(ship.quaternion));
+    g.userData = {
+      vel: new THREE.Vector3(0, 0, -1).applyQuaternion(ship.quaternion).multiplyScalar(46).add(vel),
+      target: asteroids[lockIdx],
+      life: 6,
+    };
+    scene.add(g);
+    missiles.push(g);
+  }
+
+  function killAsteroid(rock, idx) {
+    explode(rock.position, AMBER);
+    scene.remove(rock);
+    asteroids.splice(idx, 1);
+    if (lockIdx === idx) lockIdx = -1;
+    else if (lockIdx > idx) lockIdx--;
+    scrap = store.scrap(1);
+    if (missileStock < stats.maxMissiles && scrap > 0 && scrap % 3 === 0) missileStock++;
+    hud?.toast('+1 scrap', 'ok');
+  }
+
+  function damageShip(amount, sourcePos) {
+    if (invuln > 0) return;
+    hp = Math.max(0, hp - amount * stats.impactScale);
+    invuln = 0.9;
+    shake = Math.min(1.2, shake + 0.7);
+    if (sourcePos && ship) {
+      const knock = ship.position.clone().sub(sourcePos).normalize().multiplyScalar(16);
+      vel.add(knock);
+    }
+    if (hp <= 0) {
+      explode(ship.position, '#ff5fd2');
+      hud?.toast('HULL BREACH — rebooting at the gate', 'bad');
+      const p0 = planets[0]?.group.position ?? new THREE.Vector3(0, 0, 90);
+      ship.position.copy(p0).multiplyScalar(1.6).add(new THREE.Vector3(0, 22, 0));
+      ship.lookAt(core.position);
+      ship.rotateY(Math.PI);
+      vel.set(0, 0, 0);
+      hp = stats.maxHp;
+      fuel = 100;
+      invuln = 2.5;
+    }
   }
 
   function buildWorld() {
     core = makeCore(1);
-    core.position.set(0, 0, 0);
     scene.add(core);
     const coreLabel = textSprite(['❯ efferent core', 'the root context'], { color: '#9fffd0' });
     coreLabel.position.set(0, 16, 0);
     scene.add(coreLabel);
 
-    posts.forEach((p, i) => makePlanet(p, i, posts.length));
+    posts.forEach((p, i) => makePlanet(p, i));
 
-    /* faint orbit circles */
     for (let i = 0; i < posts.length; i++) {
       const dist = 70 + i * 34;
       const pts = [];
@@ -349,18 +663,46 @@ export function mount() {
       scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wireMat(GREEN_DIM, 0.18)));
     }
 
-    ship = makeShip();
+    for (let i = 0; i < 26; i++) spawnAsteroid();
+    makeBoltPool(24);
+    makeBoomPool(8);
+
+    lockReticle = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(0, -1, 0),
+        new THREE.Vector3(-1, 0, 0),
+      ]),
+      wireMat(MAGENTA, 0.95),
+    );
+    lockReticle.visible = false;
+    lockReticle.frustumCulled = false;
+    scene.add(lockReticle);
+
+    ship = makeShip(mods);
     const p0 = planets[0]?.group.position ?? new THREE.Vector3(0, 0, 90);
     ship.position.copy(p0).multiplyScalar(1.6).add(new THREE.Vector3(0, 22, 0));
-    /* lookAt points +z at the target; the nose is -z, so flip */
     ship.lookAt(core.position);
     ship.rotateY(Math.PI);
     scene.add(ship);
 
-    camera.position.copy(new THREE.Vector3(0, 3.2, 11).applyQuaternion(ship.quaternion)).add(ship.position);
+    /* spawn clearance: shove any rock that drifted onto the pad */
+    for (const rock of asteroids) {
+      const d = rock.position.distanceTo(ship.position);
+      if (d < 55)
+        rock.position.addScaledVector(
+          rock.position.clone().sub(ship.position).normalize(),
+          60 - d,
+        );
+    }
+
+    camera.position
+      .copy(new THREE.Vector3(0, 3.2, 11).applyQuaternion(ship.quaternion))
+      .add(ship.position);
     camera.lookAt(ship.position);
 
-    hud = makeHud(posts.length);
+    hud = makeHud(posts.length, mods.size);
     document.documentElement.dataset.world = 'on';
   }
 
@@ -372,6 +714,31 @@ export function mount() {
     camera.lookAt(0, 2, -30);
     renderer.domElement.classList.add('is-ambient');
     document.documentElement.dataset.world = 'ambient';
+
+    /* article pages: record the visit (this is how mods unlock) + escape hatch */
+    const slug = location.pathname.match(/^\/posts\/([^/]+)\/?$/)?.[1];
+    if (slug) {
+      if (store.visit(slug)) {
+        const note = document.createElement('div');
+        note.className = 'vh-toast ok vh-solo';
+        note.textContent = '✓ ship component acquired — return to the system to see it';
+        document.body.append(note);
+        setTimeout(() => note.remove(), 4200);
+      }
+    }
+    const back = document.createElement('a');
+    back.href = '/';
+    back.className = 'vh-return';
+    back.textContent = '⟵ return to system';
+    document.body.append(back);
+    ac.signal.addEventListener('abort', () => back.remove());
+    addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Escape') location.href = '/';
+      },
+      { signal },
+    );
   }
 
   /* ----- input ----- */
@@ -389,7 +756,29 @@ export function mount() {
       pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     };
 
-    el.addEventListener('pointermove', (e) => { setPointer(e); if (downAt) moved += Math.abs(e.movementX ?? 1) + Math.abs(e.movementY ?? 1); }, { signal });
+    document.addEventListener(
+      'pointerlockchange',
+      () => {
+        pointerLocked = document.pointerLockElement === el;
+        hud?.classList.toggle('locked', pointerLocked);
+        hud?.querySelector('[data-vh-overlay]')?.classList.toggle('hidden', pointerLocked);
+        if (!pointerLocked) keys.fire = false;
+      },
+      { signal },
+    );
+
+    el.addEventListener(
+      'mousemove',
+      (e) => {
+        if (pointerLocked) {
+          mouseDX += THREE.MathUtils.clamp(e.movementX, -60, 60);
+          mouseDY += THREE.MathUtils.clamp(e.movementY, -60, 60);
+        }
+      },
+      { signal },
+    );
+
+    el.addEventListener('pointermove', (e) => { setPointer(e); if (downAt) moved += 2; }, { signal });
 
     el.addEventListener(
       'pointerdown',
@@ -399,8 +788,10 @@ export function mount() {
         downX = e.clientX;
         downY = e.clientY;
         moved = 0;
-        thrustPointer = true;
-        el.setPointerCapture(e.pointerId);
+        if (pointerLocked) {
+          if (e.button === 0) keys.fire = true;
+          else if (e.button === 2) fireMissile();
+        }
       },
       { signal },
     );
@@ -408,8 +799,11 @@ export function mount() {
     el.addEventListener(
       'pointerup',
       (e) => {
+        if (pointerLocked) {
+          if (e.button === 0) keys.fire = false;
+          return;
+        }
         setPointer(e);
-        thrustPointer = false;
         const quick = performance.now() - downAt < 350;
         const still = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) < 9 && moved < 24;
         downAt = 0;
@@ -420,12 +814,13 @@ export function mount() {
             location.href = hit.object.userData.href;
             return;
           }
+          if (!coarse) el.requestPointerLock?.();
         }
       },
       { signal },
     );
 
-    el.addEventListener('pointercancel', () => { thrustPointer = false; downAt = 0; }, { signal });
+    el.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
 
     el.addEventListener(
       'wheel',
@@ -443,9 +838,13 @@ export function mount() {
       (e) => {
         if (e.metaKey || e.ctrlKey || e.altKey) return;
         const k = e.key;
-        if (['w', 'W', 'ArrowUp'].includes(k)) { thrustKey = true; e.preventDefault(); }
-        else if (['s', 'S', 'ArrowDown'].includes(k)) { brakeKey = true; e.preventDefault(); }
-        else if (k === 'Shift') boost = true;
+        if (['w', 'W', 'ArrowUp'].includes(k)) { keys.thrust = true; e.preventDefault(); }
+        else if (['s', 'S', 'ArrowDown'].includes(k)) { keys.brake = true; e.preventDefault(); }
+        else if (k === 'Shift') keys.boost = true;
+        else if (k === ' ') { keys.fire = true; e.preventDefault(); }
+        else if (['e', 'E'].includes(k)) fireMissile();
+        else if (['a', 'A', 'ArrowLeft'].includes(k)) { keys.roll = 1; e.preventDefault(); }
+        else if (['d', 'D', 'ArrowRight'].includes(k)) { keys.roll = -1; e.preventDefault(); }
         else if (k === 'Enter' && docked >= 0 && document.activeElement === document.body)
           location.href = planets[docked].post.href;
       },
@@ -455,9 +854,31 @@ export function mount() {
       'keyup',
       (e) => {
         const k = e.key;
-        if (['w', 'W', 'ArrowUp'].includes(k)) thrustKey = false;
-        else if (['s', 'S', 'ArrowDown'].includes(k)) brakeKey = false;
-        else if (k === 'Shift') boost = false;
+        if (['w', 'W', 'ArrowUp'].includes(k)) keys.thrust = false;
+        else if (['s', 'S', 'ArrowDown'].includes(k)) keys.brake = false;
+        else if (k === 'Shift') keys.boost = false;
+        else if (k === ' ') keys.fire = false;
+        else if (['a', 'A', 'ArrowLeft', 'd', 'D', 'ArrowRight'].includes(k)) keys.roll = 0;
+      },
+      { signal },
+    );
+
+    /* touch buttons */
+    const bindHold = (sel, on, off) => {
+      const b = hud?.querySelector(sel);
+      if (!b) return;
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); on(); }, { signal });
+      b.addEventListener('pointerup', () => off?.(), { signal });
+      b.addEventListener('pointercancel', () => off?.(), { signal });
+    };
+    bindHold('[data-vt-thrust]', () => (keys.thrust = true), () => (keys.thrust = false));
+    bindHold('[data-vt-fire]', () => (keys.fire = true), () => (keys.fire = false));
+    bindHold('[data-vt-missile]', () => fireMissile());
+
+    hud?.querySelector('[data-vh-dock]')?.addEventListener(
+      'click',
+      () => {
+        if (docked >= 0) location.href = planets[docked].post.href;
       },
       { signal },
     );
@@ -466,7 +887,8 @@ export function mount() {
   /* ----- frame loop ----- */
 
   const tmpV = new THREE.Vector3();
-  let speedReadout = 0;
+  const tmpV2 = new THREE.Vector3();
+  let hudTimer = 0;
 
   function frame() {
     const dt = Math.min(clock.getDelta(), 0.05);
@@ -483,51 +905,178 @@ export function mount() {
     }
 
     if (isWorld && ship) {
-      /* steering: pointer offset from center turns the ship */
-      const dz = 0.07;
-      const yawIn = Math.abs(pointer.x) > dz ? -(pointer.x - Math.sign(pointer.x) * dz) : 0;
-      const pitchIn = Math.abs(pointer.y) > dz ? pointer.y - Math.sign(pointer.y) * dz : 0;
-      ship.rotateY(yawIn * 1.7 * dt);
-      ship.rotateX(pitchIn * 1.15 * dt);
+      /* --- steering --- */
+      if (pointerLocked) {
+        ship.rotateY(-mouseDX * 0.0022 * stats.turn);
+        ship.rotateX(-mouseDY * 0.0019 * stats.turn);
+        mouseDX = 0;
+        mouseDY = 0;
+      } else {
+        const dz = 0.07;
+        const yawIn = Math.abs(pointer.x) > dz ? -(pointer.x - Math.sign(pointer.x) * dz) : 0;
+        const pitchIn = Math.abs(pointer.y) > dz ? pointer.y - Math.sign(pointer.y) * dz : 0;
+        ship.rotateY(yawIn * 1.7 * stats.turn * dt);
+        ship.rotateX(pitchIn * 1.15 * stats.turn * dt);
+      }
+      if (keys.roll) ship.rotateZ(keys.roll * 1.6 * dt);
 
-      /* visual bank on the hull only */
+      /* visual bank from turn input, hull-only */
       const hull = ship.userData.hull;
-      const bank = THREE.MathUtils.clamp(-yawIn * 1.1, -0.7, 0.7);
-      hull.rotation.z = THREE.MathUtils.lerp(hull.rotation.z, bank, 1 - Math.exp(-dt * 4));
+      const bankIn = pointerLocked ? 0 : THREE.MathUtils.clamp(-pointer.x, -0.7, 0.7);
+      hull.rotation.z = THREE.MathUtils.lerp(hull.rotation.z, bankIn, 1 - Math.exp(-dt * 4));
 
-      /* thrust */
+      /* --- thrust / boost / fuel --- */
       const fwd = tmpV.set(0, 0, -1).applyQuaternion(ship.quaternion);
-      const thrusting = thrustKey || thrustPointer;
-      const acc = boost ? 64 : 34;
-      if (thrusting) vel.addScaledVector(fwd, acc * dt);
-      if (brakeKey) vel.multiplyScalar(Math.exp(-dt * 3.2));
-      vel.multiplyScalar(Math.exp(-dt * 0.55)); // space drag, forgiving
-      const vmax = boost ? 95 : 60;
+      const boosting = keys.boost && fuel > 1 && keys.thrust;
+      if (boosting) fuel = Math.max(0, fuel - 34 * dt);
+      else fuel = Math.min(100, fuel + stats.fuelRegen * dt);
+      if (keys.thrust) vel.addScaledVector(fwd, (boosting ? stats.boostAcc : 34) * dt);
+      if (keys.brake) vel.multiplyScalar(Math.exp(-dt * 3.2));
+      vel.multiplyScalar(Math.exp(-dt * 0.55));
+      const vmax = boosting ? stats.vmax + 35 : stats.vmax;
       if (vel.length() > vmax) vel.setLength(vmax);
       ship.position.addScaledVector(vel, dt);
 
-      /* soft world bounds */
       const r = ship.position.length();
-      if (r > 620) vel.addScaledVector(ship.position.clone().normalize(), -dt * 40);
+      if (r > 620) vel.addScaledVector(tmpV2.copy(ship.position).normalize(), -dt * 40);
 
-      /* exhaust glow */
       const ex = ship.userData.exhaust;
       ex.material.opacity = THREE.MathUtils.lerp(
         ex.material.opacity,
-        thrusting ? 0.85 + Math.sin(time * 30) * 0.1 : 0,
+        keys.thrust ? (boosting ? 1 : 0.85) + Math.sin(time * 30) * 0.1 : 0,
         1 - Math.exp(-dt * 10),
       );
+      if (ship.userData.shieldRing && !reduced) ship.userData.shieldRing.rotation.z += dt * 0.8;
 
-      /* chase camera */
-      const camTarget = tmpV
-        .set(0, 2.6, 9.5)
-        .applyQuaternion(ship.quaternion)
-        .add(ship.position);
-      camera.position.lerp(camTarget, reduced ? 1 : 1 - Math.exp(-dt * 4.5));
-      const look = new THREE.Vector3(0, 0.8, -8).applyQuaternion(ship.quaternion).add(ship.position);
-      camera.lookAt(look);
+      /* invulnerability blink */
+      invuln = Math.max(0, invuln - dt);
+      hull.visible = invuln <= 0 || Math.sin(time * 24) > -0.2;
 
-      /* planets: moons orbit, labels breathe, docking check */
+      /* --- weapons --- */
+      fireTimer = Math.max(0, fireTimer - dt);
+      if (keys.fire) fireLasers();
+      if (missileStock < stats.maxMissiles) {
+        missileTimer += dt;
+        if (missileTimer >= stats.missileReload) {
+          missileTimer = 0;
+          missileStock++;
+        }
+      }
+
+      /* bolts */
+      for (const b of bolts) {
+        if (b.life <= 0) continue;
+        b.life -= dt;
+        b.pos.addScaledVector(b.dir, 220 * dt);
+        b.arr[0] = b.pos.x - b.dir.x * 2.4;
+        b.arr[1] = b.pos.y - b.dir.y * 2.4;
+        b.arr[2] = b.pos.z - b.dir.z * 2.4;
+        b.arr[3] = b.pos.x;
+        b.arr[4] = b.pos.y;
+        b.arr[5] = b.pos.z;
+        b.line.geometry.attributes.position.needsUpdate = true;
+        if (b.life <= 0) b.line.visible = false;
+        else
+          for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+            const rock = asteroids[ai];
+            if (b.pos.distanceTo(rock.position) < rock.userData.radius + 0.9) {
+              b.life = 0;
+              b.line.visible = false;
+              rock.userData.hp -= 1;
+              if (rock.userData.hp <= 0) killAsteroid(rock, ai);
+              else explode(b.pos, '#46ffa0');
+              break;
+            }
+          }
+      }
+
+      /* missiles */
+      for (let mi = missiles.length - 1; mi >= 0; mi--) {
+        const m = missiles[mi];
+        const u = m.userData;
+        u.life -= dt;
+        if (u.target && !asteroids.includes(u.target)) u.target = null;
+        if (u.target) {
+          const speed = Math.min(130, u.vel.length() + 60 * dt);
+          const desired = tmpV2.copy(u.target.position).sub(m.position).normalize().multiplyScalar(speed);
+          u.vel.lerp(desired, 1 - Math.exp(-dt * 3.2));
+        }
+        m.position.addScaledVector(u.vel, dt);
+        let dead = u.life <= 0;
+        for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+          const rock = asteroids[ai];
+          if (m.position.distanceTo(rock.position) < rock.userData.radius + 1.4) {
+            killAsteroid(rock, ai);
+            dead = true;
+            break;
+          }
+        }
+        if (dead) {
+          explode(m.position, '#ffc46a');
+          scene.remove(m);
+          m.children[0].material.dispose();
+          missiles.splice(mi, 1);
+        }
+      }
+
+      /* explosions */
+      for (const b of booms) {
+        if (b.life <= 0) continue;
+        b.life -= dt * 1.3;
+        for (let i = 0; i < b.arr.length; i += 3) {
+          b.arr[i] += b.vels[i] * dt;
+          b.arr[i + 1] += b.vels[i + 1] * dt;
+          b.arr[i + 2] += b.vels[i + 2] * dt;
+          b.vels[i] *= 0.94;
+          b.vels[i + 1] *= 0.94;
+          b.vels[i + 2] *= 0.94;
+        }
+        b.points.geometry.attributes.position.needsUpdate = true;
+        b.points.material.opacity = Math.max(0, b.life);
+        if (b.life <= 0) b.points.visible = false;
+      }
+
+      /* --- asteroids drift + collision --- */
+      for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+        const rock = asteroids[ai];
+        const u = rock.userData;
+        rock.position.addScaledVector(u.vel, dt);
+        if (!reduced) {
+          rock.rotation.x += u.spin.x * dt;
+          rock.rotation.y += u.spin.y * dt;
+        }
+        const d = rock.position.distanceTo(ship.position);
+        if (d < u.radius + 1.6) {
+          damageShip(10 + u.radius * 3, rock.position);
+          killAsteroid(rock, ai);
+        }
+      }
+      if (asteroids.length < 26 && Math.random() < dt * 0.25) spawnAsteroid(true);
+
+      /* --- auto-lock: nearest asteroid in the forward cone --- */
+      let bestScore = 0.965; // ~15° cone
+      let best = -1;
+      for (let i = 0; i < asteroids.length; i++) {
+        const d = tmpV2.copy(asteroids[i].position).sub(ship.position);
+        const dist = d.length();
+        if (dist > 260) continue;
+        const score = d.normalize().dot(fwd);
+        if (score > bestScore) {
+          bestScore = score;
+          best = i;
+        }
+      }
+      lockIdx = best;
+      if (lockIdx >= 0) {
+        const rock = asteroids[lockIdx];
+        lockReticle.visible = true;
+        lockReticle.position.copy(rock.position);
+        lockReticle.scale.setScalar(rock.userData.radius * 2);
+        lockReticle.lookAt(camera.position);
+        if (!reduced) lockReticle.rotation.z = time * 2;
+      } else lockReticle.visible = false;
+
+      /* --- planets: moons, soft repulsion, docking --- */
       let nearest = -1;
       let nearestD = Infinity;
       for (let i = 0; i < planets.length; i++) {
@@ -535,12 +1084,21 @@ export function mount() {
         if (!reduced) {
           pl.wire.rotation.y += dt * 0.12;
           for (const m of pl.moons) {
-            const u = m.userData;
-            const a = time * u.speed + u.phase;
-            m.position.set(Math.cos(a) * u.orbit * 0.5, Math.sin(a * 0.7) * 1.5, Math.sin(a) * u.orbit * 0.5);
+            const um = m.userData;
+            const a = time * um.speed + um.phase;
+            m.position.set(
+              Math.cos(a) * um.orbit * 0.5,
+              Math.sin(a * 0.7) * 1.5,
+              Math.sin(a) * um.orbit * 0.5,
+            );
           }
         }
         const d = pl.group.position.distanceTo(ship.position);
+        if (d < pl.radius + 2.5) {
+          const push = tmpV2.copy(ship.position).sub(pl.group.position).normalize();
+          ship.position.copy(pl.group.position).addScaledVector(push, pl.radius + 2.5);
+          vel.multiplyScalar(0.6);
+        }
         if (d < nearestD) {
           nearestD = d;
           nearest = i;
@@ -549,25 +1107,54 @@ export function mount() {
 
       const wasDocked = docked;
       docked = nearest >= 0 && nearestD < planets[nearest].radius * 2.4 + 12 ? nearest : -1;
+      if (docked >= 0) hp = Math.min(stats.maxHp, hp + 9 * dt); // docking repairs
       if (docked !== wasDocked) {
         if (wasDocked >= 0) planets[wasDocked].ring.material.opacity = 0.5;
-        if (docked >= 0) planets[docked].ring.material.opacity = 1;
-        const cap = hud?.querySelector('[data-vh-caption]');
-        if (cap) {
-          if (docked >= 0) {
-            const p = planets[docked].post;
-            cap.innerHTML = `◉ in orbit: <b>${p.title}</b> — press ↵ or click to read`;
-            cap.classList.add('on');
-          } else cap.classList.remove('on');
-        }
+        const dockEl = hud?.querySelector('[data-vh-dock]');
+        if (docked >= 0) {
+          planets[docked].ring.material.opacity = 1;
+          const pl = planets[docked];
+          const owned = pl.post.slug && store.visited().has(pl.post.slug);
+          if (dockEl) {
+            dockEl.hidden = false;
+            dockEl.innerHTML = `◉ in orbit: <b>${pl.post.title}</b><br><span>↵ read${
+              owned ? ' · component installed ✓' : ` · installs <b>${pl.mod.name}</b> (${pl.mod.desc})`
+            } · repairs while docked</span>`;
+          }
+        } else if (dockEl) dockEl.hidden = true;
       }
 
-      /* HUD speed readout, throttled */
-      if (((speedReadout += dt) > 0.25 || docked !== wasDocked) && hud) {
-        speedReadout = 0;
-        const top = hud.querySelector('[data-vh-top]');
-        if (top)
-          top.textContent = `system xandreed · ${planets.length} planets · v ${Math.round(vel.length())}`;
+      /* --- chase camera + shake --- */
+      shake = Math.max(0, shake - dt * 1.8);
+      const camTarget = tmpV2.set(0, 2.6, 9.5).applyQuaternion(ship.quaternion).add(ship.position);
+      camera.position.lerp(camTarget, reduced ? 1 : 1 - Math.exp(-dt * 4.5));
+      if (shake > 0 && !reduced)
+        camera.position.add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * shake,
+            (Math.random() - 0.5) * shake,
+            (Math.random() - 0.5) * shake,
+          ),
+        );
+      const look = new THREE.Vector3(0, 0.8, -8).applyQuaternion(ship.quaternion).add(ship.position);
+      camera.lookAt(look);
+
+      /* --- HUD --- */
+      if ((hudTimer += dt) > 0.12 && hud) {
+        hudTimer = 0;
+        hud.querySelector('[data-vh-hp]').style.width = `${(hp / stats.maxHp) * 100}%`;
+        hud.querySelector('[data-vh-boost]').style.width = `${fuel}%`;
+        hud.querySelector('[data-vh-hp]').classList.toggle('low', hp / stats.maxHp < 0.3);
+        hud.querySelector('[data-vh-stats]').textContent = `v ${Math.round(
+          vel.length(),
+        )} · ◆ ${scrap} · ➤ ${missileStock} · mods ${mods.size}/${MODS.length}`;
+        const lockEl = hud.querySelector('[data-vh-lock]');
+        if (lockIdx >= 0) {
+          lockEl.textContent = `◈ lock ${Math.round(
+            asteroids[lockIdx].position.distanceTo(ship.position),
+          )}m`;
+          lockEl.classList.add('on');
+        } else lockEl.classList.remove('on');
       }
     } else if (!isWorld && !reduced) {
       scene.rotation.y = Math.sin(time * 0.05) * 0.02;
@@ -586,7 +1173,6 @@ export function mount() {
   }
   addEventListener('resize', onResize, { signal });
 
-  /* boot: make sure VT323 is ready before painting labels */
   const start = async () => {
     try {
       await Promise.race([
@@ -608,6 +1194,7 @@ export function mount() {
   function unmount() {
     ac.abort();
     cancelAnimationFrame(raf);
+    if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
     scene.traverse((o) => {
       o.geometry?.dispose?.();
       const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
