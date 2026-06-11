@@ -270,6 +270,18 @@
   opacity: 1;
 }
 
+/* weapon cooldowns, always visible under the lock line */
+.vector-hud .vh-weap {
+  position: absolute;
+  top: calc(50% + 4.1rem);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: oklch(82% 0.13 75);
+  text-shadow: 0 0 8px oklch(82% 0.13 75 / 0.35);
+}
+
 /* dock card */
 .vector-hud .vh-dock {
   pointer-events: auto;
@@ -398,6 +410,8 @@
 }
 
 .vector-hud .vh-cluster button {
+  position: relative;
+  overflow: hidden;
   font-family: 'VT323', monospace;
   font-size: 1.25rem;
   letter-spacing: 0.05em;
@@ -412,10 +426,44 @@
   user-select: none;
 }
 
+/* cooldown sweep: JS sets --cd as a percentage */
+.vector-hud .vh-cluster button::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--cd, 0%);
+  background: oklch(0% 0 0 / 0.5);
+  pointer-events: none;
+}
+
+/* abilities you haven't installed yet */
+.vector-hud .vh-cluster button[disabled] {
+  opacity: 0.35;
+}
+
 .vector-hud .vh-cluster button[data-vt-missile] {
   grid-column: 1 / -1;
   color: oklch(82% 0.13 75);
   border-color: oklch(82% 0.13 75 / 0.5);
+}
+
+.vector-hud .vh-cluster button[data-vt-parry] {
+  color: oklch(80% 0.13 230);
+  border-color: oklch(80% 0.13 230 / 0.5);
+}
+
+/* the base weapon gets the big bottom button */
+.vector-hud .vh-cluster button[data-vt-fire] {
+  grid-column: 1 / -1;
+}
+
+/* tunnel mode: thrust is automatic, the commands swap */
+.vector-hud .vh-cluster[data-run] button[data-vt-thrust] {
+  display: none;
+}
+
+.vector-hud .vh-cluster[data-run] button[data-vt-brake] {
+  grid-column: 1 / -1;
 }
 
 .vector-hud .vh-cluster button:active {

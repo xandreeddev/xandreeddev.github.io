@@ -57,11 +57,11 @@ const SHIP_KEY = 'vector-ship'; // sessionStorage: ship state across page visits
    in makeShip; the rest are pure stat nodes. */
 const TREE = [
   { id: 'twin', branch: 'guns', name: 'twin cannons', desc: 'a second laser muzzle', cost: 1 },
-  { id: 'pods', branch: 'guns', name: 'missile pods', desc: 'twin salvo, faster reload', cost: 1, req: 'twin' },
+  { id: 'pods', branch: 'guns', name: 'missile pods', desc: 'unlocks ➤ homing missiles · twin salvo', cost: 1, req: 'twin' },
   { id: 'lance', branch: 'guns', name: 'lance coils', desc: 'faster, harder bolts', cost: 2, req: 'pods' },
-  { id: 'burner', branch: 'drive', name: 'afterburner', desc: 'hotter boost, faster fuel regen', cost: 1 },
+  { id: 'burner', branch: 'drive', name: 'afterburner', desc: 'unlocks ⚡ boost · faster fuel regen', cost: 1 },
   { id: 'wings', branch: 'drive', name: 'swept wings', desc: '+30% turn rate', cost: 1, req: 'burner' },
-  { id: 'gyro', branch: 'drive', name: 'reflex gyros', desc: 'sharper turns, harder brakes', cost: 2, req: 'wings' },
+  { id: 'gyro', branch: 'drive', name: 'reflex gyros', desc: 'sharper turns & brakes · faster ⛨ parry', cost: 2, req: 'wings' },
   { id: 'shield', branch: 'hull', name: 'deflector ring', desc: 'a 40-pt regenerating shield', cost: 1 },
   { id: 'gold', branch: 'hull', name: 'gilded hull', desc: '+12 top speed', cost: 1, req: 'shield' },
   { id: 'reactor', branch: 'hull', name: 'nanoreactor', desc: 'hull self-repairs in flight', cost: 2, req: 'gold' },
@@ -249,6 +249,7 @@ function makeAudio() {
       burst(0.12, 500, 0.15);
     },
     tick: () => blip('square', 1400, 1400, 0.035, 0.07),
+    parry: () => blip('square', 420, 1680, 0.14, 0.2),
     pickup: () => blip('triangle', 660, 1320, 0.12, 0.16),
     dock: () => {
       blip('triangle', 523, 523, 0.1, 0.14);
@@ -691,6 +692,11 @@ function jitter(geo, seed) {
 
 /* ----- HUD ----- */
 
+const HELP_WORLD =
+  'mouse aim · W thrust · shift boost · space fire · E missile · Q parry · S brake · T tree · M sound · esc release';
+const HELP_RUN =
+  'steer across the tube · shift boost · S brake · space fire · E missile · Q parry';
+
 function makeHud(n) {
   const hud = document.createElement('div');
   hud.className = 'vector-hud';
@@ -708,6 +714,7 @@ function makeHud(n) {
       <button type="button" data-vh-mute aria-label="Toggle sound"></button>
     </div>
     <div class="vh-lock" data-vh-lock aria-hidden="true"></div>
+    <div class="vh-weap" data-vh-weap aria-hidden="true"></div>
     <div class="vh-toasts" data-vh-toasts aria-live="polite"></div>
     <div class="vh-dock" data-vh-dock hidden></div>
     <div class="vh-tree" data-vh-tree hidden>
@@ -715,7 +722,7 @@ function makeHud(n) {
       <div class="vh-tree-grid" data-vh-tree-grid></div>
       <p class="vh-tree-hint">reading an article banks one ⬡ core · installed components persist</p>
     </div>
-    <div class="vh-help" aria-hidden="true">mouse aim · W thrust · shift boost · space fire · E missile · S brake · T tree · M sound · ↵ read docked · esc release</div>
+    <div class="vh-help" data-vh-help aria-hidden="true">${HELP_WORLD}</div>
     <div class="vh-overlay" data-vh-overlay><b>❯ take the stick</b><span>${
       coarse
         ? 'left thumb steers · ▲ engages thrust · tap a planet to read it'
@@ -724,8 +731,9 @@ function makeHud(n) {
     ${
       coarse
         ? `<div class="vh-stick" data-vh-stick hidden><i></i></div>
-    <div class="vh-cluster">
+    <div class="vh-cluster" data-vh-cluster>
       <button type="button" data-vt-missile>➤ missile</button>
+      <button type="button" data-vt-parry>⛨ parry</button>
       <button type="button" data-vt-boost>⚡ boost</button>
       <button type="button" data-vt-brake>■ brake</button>
       <button type="button" data-vt-thrust>▲ thrust</button>
@@ -811,17 +819,20 @@ export function mount() {
     maxHp: 100,
     turn: (owned.has('wings') ? 1.3 : 1) + (owned.has('gyro') ? 0.25 : 0),
     vmax: 60 + (owned.has('gold') ? 12 : 0),
-    boostAcc: owned.has('burner') ? 86 : 64,
+    hasBoost: owned.has('burner'), // boost is an equipped ability, not a given
+    boostAcc: 86,
     fuelRegen: owned.has('burner') ? 30 : 18,
     shieldMax: owned.has('shield') ? 40 : 0,
     shieldRegen: 12, // per second, after 4s without taking a hit
-    missileCooldown: owned.has('pods') ? 1.1 : 2.4,
-    missileDmg: owned.has('pods') ? 4 : 3,
-    missileVmax: owned.has('pods') ? 150 : 130,
+    hasMissiles: owned.has('pods'), // so is the launcher
+    missileCooldown: 1.6,
+    missileDmg: 4,
+    missileVmax: 150,
     fireDelay: owned.has('lance') ? 0.11 : 0.15,
     boltDmg: owned.has('lance') ? 2 : 1,
     boltSpeed: owned.has('lance') ? 275 : 220,
     brake: owned.has('gyro') ? 4.6 : 3.2,
+    parryCd: owned.has('gyro') ? 2.2 : 3.2,
     regen: owned.has('reactor') ? 2.2 : 0,
   });
   const stats = calcStats();
@@ -850,8 +861,12 @@ export function mount() {
   let best = store.best();
   let missileCd = 0;
   let fireTimer = 0;
+  let parryCd = 0;
+  let parryT = 0; // active parry window remaining
   let invuln = 0;
   let shake = 0;
+  let simPaused = false; // tree menu open: freeze the sim, free the mouse
+  let boostHinted = false;
   let docked = -1;
   let lockTgt = null;
   let prevLock = null;
@@ -1020,8 +1035,23 @@ export function mount() {
     b.dir.z += (Math.random() - 0.5) * jitterAmt;
     b.dir.normalize();
     b.life = 2.2;
+    b.reflected = false;
+    b.line.material.color.set(MAGENTA);
     b.line.visible = true;
   }
+
+  const nearestEnemy = (p) => {
+    let best = null;
+    let bd = Infinity;
+    for (const en of enemies) {
+      const d = en.position.distanceTo(p);
+      if (d < bd) {
+        bd = d;
+        best = en;
+      }
+    }
+    return best;
+  };
 
   function spawnEnemy() {
     const e = makeEnemyCraft(1);
@@ -1074,6 +1104,48 @@ export function mount() {
     }
   }
 
+  /* floating damage numbers: pooled canvas sprites, redrawn on spawn */
+  const pops = [];
+  function makePopPool(n) {
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('canvas');
+      c.width = 128;
+      c.height = 64;
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const s = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }),
+      );
+      s.visible = false;
+      scene.add(s);
+      pops.push({ s, c, tex, life: 0 });
+    }
+  }
+
+  function popDamage(pos, amount, color = '#eafff2') {
+    const p = pops.find((x) => x.life <= 0) ?? pops[0];
+    if (!p) return;
+    const ctx = p.c.getContext('2d');
+    ctx.clearRect(0, 0, 128, 64);
+    ctx.font = '46px VT323, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = color;
+    ctx.fillText(String(amount), 64, 44);
+    p.tex.needsUpdate = true;
+    p.s.position.copy(pos);
+    p.s.visible = true;
+    p.life = 0.8;
+  }
+
+  /* parry: base ability — a timed window that throws enemy bolts back */
+  function parry() {
+    if (parryCd > 0 || !ship) return;
+    parryCd = stats.parryCd;
+    parryT = 0.4;
+    audio.parry();
+    for (const r of ship.userData.shieldRings ?? []) r.material.opacity = 1;
+  }
+
   function explode(pos, color = AMBER) {
     const b = booms.find((x) => x.life <= 0) ?? booms[0];
     for (let i = 0; i < b.arr.length; i += 3) {
@@ -1094,7 +1166,7 @@ export function mount() {
   function fireLasers() {
     if (fireTimer > 0 || !ship) return;
     /* boosting overclocks the guns; bolts inherit some of the ship's speed */
-    fireTimer = stats.fireDelay * (keys.boost && keys.thrust ? 0.85 : 1);
+    fireTimer = stats.fireDelay * (keys.boost && stats.hasBoost && keys.thrust ? 0.85 : 1);
     const shipSpeed = run.active ? run.speed : vel.length();
     const { muzzles } = ship.userData;
     /* aim: locked target with lead, else straight ahead */
@@ -1119,12 +1191,16 @@ export function mount() {
 
   function fireMissile() {
     if (!ship || missileCd > 0) return;
+    if (!stats.hasMissiles) {
+      hud?.toast('➤ missiles need the pods — ability tree (T)', 'warn');
+      return;
+    }
     if (!lockTgt) {
       hud?.toast('no lock — face a target', 'warn');
       return;
     }
     missileCd = stats.missileCooldown;
-    const tubes = owned.has('pods') ? [1.05, -1.05] : [0];
+    const tubes = [1.05, -1.05];
     /* in a transit run the ship's velocity lives in run.speed, not vel */
     const inherit = run.active
       ? new THREE.Vector3(0, 0, -run.speed).applyQuaternion(ship.quaternion)
@@ -1334,6 +1410,9 @@ export function mount() {
     if (dockEl) dockEl.hidden = true;
     ship.position.copy(run.curve.getPointAt(0));
     vel.set(0, 0, 0);
+    /* the commands swap with the mode */
+    hud?.els?.cluster?.setAttribute('data-run', '');
+    if (hud?.els?.help) hud.els.help.textContent = HELP_RUN;
     audio.portal();
     hud?.toast(`⌬ transit ${String(idx + 1).padStart(2, '0')} — survive to the warden`, 'warn');
   }
@@ -1376,6 +1455,8 @@ export function mount() {
     for (const m of missiles) m.userData.target = null;
     lockTgt = null;
     worldGroup.visible = true;
+    hud?.els?.cluster?.removeAttribute('data-run');
+    if (hud?.els?.help) hud.els.help.textContent = HELP_WORLD;
     /* drop back beside the portal, pointed at the core */
     const portal = portals[run.idx];
     if (portal && ship) {
@@ -1457,6 +1538,7 @@ export function mount() {
     Object.assign(stats, calcStats());
     if (id === 'shield') shield = stats.shieldMax;
     rebuildShip();
+    syncCluster();
     audio.chime();
     hud?.toast(`component installed: ${n.name}`, 'ok');
     renderTree();
@@ -1471,6 +1553,19 @@ export function mount() {
       renderTree();
     }
     panel.hidden = !open;
+    /* menu open = sim frozen, mouse free */
+    simPaused = open && isWorld;
+    if (simPaused) audio.thrust(false, false);
+  }
+
+  /* equipped abilities live on the cluster buttons — disabled until owned */
+  function syncCluster() {
+    const c = hud?.querySelector('[data-vh-cluster]');
+    if (!c) return;
+    const missileBtn = c.querySelector('[data-vt-missile]');
+    const boostBtn = c.querySelector('[data-vt-boost]');
+    if (missileBtn) missileBtn.disabled = !stats.hasMissiles;
+    if (boostBtn) boostBtn.disabled = !stats.hasBoost;
   }
 
   function syncMuteBtn() {
@@ -1514,6 +1609,7 @@ export function mount() {
     makeBoltPool(24);
     makeEboltPool(16);
     makeBoomPool(8);
+    makePopPool(12);
 
     /* chronological route: a dashed path threading the planets oldest →
        newest; flow dots drift along it showing the direction of time */
@@ -1651,9 +1747,15 @@ export function mount() {
       boost: hud.querySelector('[data-vh-boost]'),
       stats: hud.querySelector('[data-vh-stats]'),
       lock: hud.querySelector('[data-vh-lock]'),
+      weap: hud.querySelector('[data-vh-weap]'),
       top: hud.querySelector('[data-vh-top]'),
       dock: hud.querySelector('[data-vh-dock]'),
+      help: hud.querySelector('[data-vh-help]'),
+      cluster: hud.querySelector('[data-vh-cluster]'),
+      missileBtn: hud.querySelector('[data-vt-missile]'),
+      parryBtn: hud.querySelector('[data-vt-parry]'),
     };
+    syncCluster();
     document.documentElement.dataset.world = 'on';
 
     if (cores > 0)
@@ -1870,7 +1972,9 @@ export function mount() {
         }
         const quick = d && performance.now() - d.t < 350;
         const still = d && Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 9 && d.moved < 24;
-        if (quick && still && !run.active) {
+        /* while the tree menu is open the canvas is inert: no planet nav and
+           especially no pointer-lock grabbing the mouse out from the menu */
+        if (quick && still && !run.active && !simPaused) {
           raycaster.setFromCamera(
             new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1),
             camera,
@@ -1918,9 +2022,16 @@ export function mount() {
         const k = e.key;
         if (['w', 'W', 'ArrowUp'].includes(k)) { keys.thrust = true; e.preventDefault(); }
         else if (['s', 'S', 'ArrowDown'].includes(k)) { keys.brake = true; e.preventDefault(); }
-        else if (k === 'Shift') keys.boost = true;
+        else if (k === 'Shift') {
+          keys.boost = true;
+          if (!stats.hasBoost && !boostHinted) {
+            boostHinted = true;
+            hud?.toast('⚡ boost needs the afterburner — ability tree (T)', 'warn');
+          }
+        }
         else if (k === ' ') { keys.fire = true; e.preventDefault(); }
         else if (['e', 'E'].includes(k)) fireMissile();
+        else if (['q', 'Q'].includes(k)) parry();
         else if (['t', 'T'].includes(k)) toggleTree();
         else if (['m', 'M'].includes(k)) toggleMute();
         else if (k === 'Escape') toggleTree(false);
@@ -1989,6 +2100,7 @@ export function mount() {
     bindHold('[data-vt-brake]', () => (keys.brake = true), () => (keys.brake = false));
     bindHold('[data-vt-fire]', () => (keys.fire = true), () => (keys.fire = false));
     bindHold('[data-vt-missile]', () => fireMissile());
+    bindHold('[data-vt-parry]', () => parry());
 
     hud?.querySelector('[data-vh-dock]')?.addEventListener(
       'click',
@@ -2075,7 +2187,7 @@ export function mount() {
 
     /* --- thrust / boost / fuel --- */
     const fwd = tmpV.set(0, 0, -1).applyQuaternion(ship.quaternion);
-    const boosting = keys.boost && fuel > 1 && keys.thrust;
+    const boosting = keys.boost && stats.hasBoost && fuel > 1 && keys.thrust;
     if (boosting) fuel = Math.max(0, fuel - 34 * dt);
     else fuel = Math.min(100, fuel + stats.fuelRegen * dt);
     if (keys.thrust) vel.addScaledVector(fwd, (boosting ? stats.boostAcc : 34) * dt);
@@ -2162,8 +2274,8 @@ export function mount() {
       const pl = planets[i];
       /* constant-ish screen size for the nameplate */
       const labelD = camera.position.distanceTo(pl.group.position);
-      const k = THREE.MathUtils.clamp(labelD / 55, 0.7, 3.4);
-      pl.label.scale.set(28 * k, 7 * k, 1);
+      const k = THREE.MathUtils.clamp(labelD / 55, 0.85, 3.8);
+      pl.label.scale.set(38 * k, 9.5 * k, 1);
       if (!reduced) {
         pl.wire.rotation.y += dt * 0.12;
         for (const m of pl.moons) {
@@ -2255,13 +2367,15 @@ export function mount() {
     }
     run.offV.multiplyScalar(Math.exp(-dt * 2.6));
     run.off.addScaledVector(run.offV, dt);
-    if (run.off.length() > 10) {
-      run.off.setLength(10);
+    /* the boss arena grants extra dodge room */
+    const offMax = run.bossPhase ? 14 : 10;
+    if (run.off.length() > offMax) {
+      run.off.setLength(offMax);
       run.offV.multiplyScalar(0.4);
     }
 
     /* throttle: boost spends fuel, brake eases off, gates add bursts */
-    const boosting = keys.boost && fuel > 1;
+    const boosting = keys.boost && stats.hasBoost && fuel > 1;
     if (boosting) fuel = Math.max(0, fuel - 26 * dt);
     else fuel = Math.min(100, fuel + stats.fuelRegen * dt);
     run.speed = THREE.MathUtils.lerp(
@@ -2361,6 +2475,8 @@ export function mount() {
     invuln = Math.max(0, invuln - dt);
     fireTimer = Math.max(0, fireTimer - dt);
     missileCd = Math.max(0, missileCd - dt);
+    parryCd = Math.max(0, parryCd - dt);
+    parryT = Math.max(0, parryT - dt);
     if (stats.regen) hp = Math.min(stats.maxHp, hp + stats.regen * dt);
     if (stats.shieldMax) {
       shieldHitT += dt;
@@ -2373,7 +2489,9 @@ export function mount() {
 
     const ex = ship.userData.exhaust;
     const exOn = run.active || keys.thrust;
-    const exHot = run.active ? keys.boost && fuel > 1 : keys.boost && keys.thrust && fuel > 1;
+    const exHot =
+      stats.hasBoost &&
+      (run.active ? keys.boost && fuel > 1 : keys.boost && keys.thrust && fuel > 1);
     ex.material.opacity = THREE.MathUtils.lerp(
       ex.material.opacity,
       exOn ? (exHot ? 1 : 0.85) + Math.sin(time * 30) * 0.1 : 0,
@@ -2419,6 +2537,7 @@ export function mount() {
         if (sweepHit(segA, b.dir, step, rock.position, rock.userData.radius + 0.9)) {
           consumed = true;
           rock.userData.hp -= stats.boltDmg;
+          popDamage(b.pos, stats.boltDmg);
           if (rock.userData.hp <= 0) {
             if (run.active) {
               explode(rock.position, AMBER);
@@ -2435,6 +2554,7 @@ export function mount() {
         if (run.active) {
           if (run.boss && sweepHit(segA, b.dir, step, run.boss.position, 5.4)) {
             consumed = true;
+            popDamage(b.pos, stats.boltDmg);
             hurtBoss(stats.boltDmg, b.pos);
           }
         } else {
@@ -2443,6 +2563,7 @@ export function mount() {
             if (sweepHit(segA, b.dir, step, en.position, 2.8)) {
               consumed = true;
               en.userData.hp -= stats.boltDmg;
+              popDamage(b.pos, stats.boltDmg);
               if (en.userData.hp <= 0) killEnemy(en);
               else explode(b.pos, '#ff5fd2');
               break;
@@ -2474,11 +2595,61 @@ export function mount() {
         b.line.visible = false;
         continue;
       }
+      if (b.reflected) {
+        /* a parried bolt hunts its makers */
+        if (run.active) {
+          if (run.boss && sweepHit(segA, b.dir, step, run.boss.position, 5.4)) {
+            b.life = 0;
+            b.line.visible = false;
+            popDamage(b.pos, 5, '#6ad8ff');
+            hurtBoss(5, b.pos);
+          }
+        } else {
+          for (let ei = enemies.length - 1; ei >= 0; ei--) {
+            const en = enemies[ei];
+            if (sweepHit(segA, b.dir, step, en.position, 2.8)) {
+              b.life = 0;
+              b.line.visible = false;
+              popDamage(b.pos, 5, '#6ad8ff');
+              en.userData.hp -= 5;
+              if (en.userData.hp <= 0) killEnemy(en);
+              else explode(b.pos, '#ff5fd2');
+              break;
+            }
+          }
+        }
+        continue;
+      }
+      /* parry window: incoming bolts get thrown back at their source */
+      if (parryT > 0 && b.pos.distanceTo(ship.position) < 9) {
+        b.reflected = true;
+        b.life = 2.2;
+        b.line.material.color.set(CYAN);
+        const tgt = run.active ? run.boss : nearestEnemy(b.pos);
+        if (tgt) b.dir.copy(tgt.position).sub(b.pos).normalize();
+        else b.dir.negate();
+        addScore(15);
+        explode(ship.position, '#6ad8ff');
+        audio.tick();
+        continue;
+      }
       if (sweepHit(segA, b.dir, step, ship.position, 2.6)) {
         b.life = 0;
         b.line.visible = false;
         damageShip(7, b.pos);
       }
+    }
+
+    /* damage numbers: drift up, hold size on screen, fade */
+    for (const p of pops) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.s.position.y += dt * 5;
+      const pd = camera.position.distanceTo(p.s.position);
+      const pk = THREE.MathUtils.clamp(pd / 38, 0.8, 4);
+      p.s.scale.set(7 * pk, 3.5 * pk, 1);
+      p.s.material.opacity = Math.min(1, p.life * 2.2);
+      if (p.life <= 0) p.s.visible = false;
     }
 
     /* missiles — weapon-scaled damage, not instakill */
@@ -2506,6 +2677,7 @@ export function mount() {
         const rock = rocks[ai];
         if (sweepHit(segA, segB, mStep, rock.position, rock.userData.radius + 1.4)) {
           rock.userData.hp -= stats.missileDmg;
+          popDamage(m.position, stats.missileDmg, '#ffc46a');
           if (rock.userData.hp <= 0) {
             if (run.active) {
               explode(rock.position, AMBER);
@@ -2522,6 +2694,7 @@ export function mount() {
       if (!dead) {
         if (run.active) {
           if (run.boss && sweepHit(segA, segB, mStep, run.boss.position, 5.6)) {
+            popDamage(m.position, stats.missileDmg, '#ffc46a');
             hurtBoss(stats.missileDmg, m.position);
             dead = true;
           }
@@ -2530,6 +2703,7 @@ export function mount() {
             const en = enemies[ei];
             if (sweepHit(segA, segB, mStep, en.position, 3)) {
               en.userData.hp -= stats.missileDmg;
+              popDamage(m.position, stats.missileDmg, '#ffc46a');
               if (en.userData.hp <= 0) killEnemy(en);
               dead = true;
               break;
@@ -2606,6 +2780,19 @@ export function mount() {
         els.lock.textContent = `◈ lock ${Math.round(lockTgt.position.distanceTo(ship.position))}m`;
         els.lock.classList.add('on');
       } else els.lock.classList.remove('on');
+      /* weapon cooldowns — always visible */
+      const mTxt = stats.hasMissiles
+        ? missileCd > 0
+          ? `➤ ${missileCd.toFixed(1)}s`
+          : '➤ ready'
+        : '➤ locked';
+      const pTxt = parryCd > 0 ? `⛨ ${parryCd.toFixed(1)}s` : '⛨ ready';
+      els.weap.textContent = `${mTxt} · ${pTxt}`;
+      els.missileBtn?.style.setProperty(
+        '--cd',
+        `${Math.round((missileCd / stats.missileCooldown) * 100)}%`,
+      );
+      els.parryBtn?.style.setProperty('--cd', `${Math.round((parryCd / stats.parryCd) * 100)}%`);
     }
   }
 
@@ -2624,9 +2811,12 @@ export function mount() {
     }
 
     if (isWorld && ship) {
-      if (run.active) updateRun(dt);
-      else updateWorld(dt, time);
-      updateShared(dt, time);
+      /* tree menu open: hold the world still under it */
+      if (!simPaused) {
+        if (run.active) updateRun(dt);
+        else updateWorld(dt, time);
+        updateShared(dt, time);
+      }
     } else if (!isWorld && !reduced) {
       scene.rotation.y = Math.sin(time * 0.05) * 0.02;
       camera.position.y = 1 + Math.sin(time * 0.4) * 0.12;
