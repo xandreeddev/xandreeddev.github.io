@@ -91,13 +91,29 @@ the next push. Commit a post to `main` only when it should go live.
 Rules that keep it healthy:
 
 - Every listener goes through the mount's `AbortController` signal; `unmount()` must
-  stay idempotent and dispose Three.js resources (scene traverse + renderer/composer).
+  stay idempotent and dispose Three.js resources (`disposeObject`, bloom pass,
+  `forceContextLoss`). Glow textures and the missile material are shared/cached for
+  the page lifetime — disposal skips anything with `userData.shared`.
 - The DOM is the source of truth: the world reads `.post-row` elements. Homepage =
-  world mode; post pages = ambient mode with a return chip.
+  world mode; post pages = ambient mode with a return chip. Planet layout is
+  procedural — shells of six, seeded from post slugs (`hash01`) — so any post count
+  works without touching the code; the newest post takes the innermost slot.
 - Desktop input is pointer-lock + mouse-follow; touch is a virtual stick (left ~60% of
-  the screen) + right-thumb cluster (`data-vt-*` buttons; thrust latches, boost holds).
-  Touch must never feed the mouse-follow path or call `requestPointerLock`.
-- Progress lives in `localStorage` (visited posts unlock ship mods, scrap persists).
+  the screen, quadratic response curve) + right-thumb cluster (`data-vt-*` buttons;
+  thrust latches, boost holds). Touch must never feed the mouse-follow path or call
+  `requestPointerLock`; pinch/double-tap zoom is suppressed in world mode (gesture
+  events + body `touch-action: none`).
+- Game state: reading a post banks a ⬡ core (`vector-visited`); the ability tree
+  spends them (`vector-tree`); scrap / best score / mute persist in localStorage;
+  the full ship state + session score round-trip article visits and style flips via
+  sessionStorage (`vector-ship`, saved on pagehide and unmount).
+- Portals at the system edge open transit runs — tunnels generated deterministically
+  with `mulberry()` seeded from the portal index (obstacles, boost gates, a warden
+  boss). Never use `Math.random` for anything that must look the same across visits.
+- Projectile collision is swept (segment-vs-sphere via `sweepHit`), never
+  point-sampled — fast bolts tunnel through small targets otherwise.
+- Sound is synthesized WebAudio (`makeAudio`), created lazily on the first user
+  gesture; `M` and the HUD button mute (persisted).
 - Keep it a lazy dynamic import — the other five styles must never pay for Three.js.
 
 ## Deploy / domain

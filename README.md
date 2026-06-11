@@ -33,19 +33,29 @@ visit follows `prefers-color-scheme` (dark → phosphor, light → gazette).
 
 In **vector**, the blog is efferent's context tree as a star system you fly: the
 core is the sun, every post is a wireframe planet (one moon per tag, amber if
-draft). Click the void to take the stick (pointer lock) — mouse aims, `W` thrusts,
-`shift` boosts, `space`/click fires lasers with target lead, `E`/right-click sends
-a homing missile at the auto-locked asteroid, `S` brakes, `A`/`D` roll, `esc`
-releases. On touch screens (iPad / iPhone / Android) the left half of the screen
-is a virtual stick and a right-thumb cluster handles thrust (toggle), boost,
-brake, fire and missiles — tapping a planet still opens it. An asteroid belt drifts between the orbits; rocks drop scrap, impacts
-cost hull, docking at a planet repairs. Click a planet (or dock and press `↵`) to
-open the article — and **reading an article installs a visible ship component**:
-twin cannons, afterburner, missile pods, deflector ring, swept wings, gilded hull.
-Article pages keep a quiet ambient field behind a readable HUD panel, with a
-"return to system" chip (`esc` works too). The world reads the post list straight
-from the DOM, mounts/unmounts live with the switcher, and the other styles never
-pay for it. No WebGL? The CRT fallback is a complete theme on its own.
+draft) on procedurally generated orbit shells — the layout is seeded from post
+slugs and scales to any number of articles, newest innermost. Click the void to
+take the stick (pointer lock) — mouse aims, `W` thrusts, `shift` boosts,
+`space`/click fires lasers with target lead, `E`/right-click sends a homing
+missile at the auto-locked target, `S` brakes, `A`/`D` roll, `esc` releases. On
+touch screens (iPad / iPhone / Android) the left half of the screen is a virtual
+stick and a right-thumb cluster handles thrust (toggle), boost, brake, fire and
+missiles — pinch/double-tap zoom is suppressed while flying, and tapping a
+planet still opens it. An asteroid belt drifts between the orbits; rocks drop
+scrap and score, interceptors start hunting once your score climbs, and docking
+at a planet repairs. **Reading an article banks a ⬡ core to spend in the ability
+tree** (`T`): guns / drive / hull branches with visible ship components — twin
+cannons, missile pods, lance coils, afterburner, swept wings, reflex gyros, a
+regenerating deflector shield, gilded hull, nanoreactor. Portal rings at the
+system edge open **seeded transit runs**: a generated tunnel of obstacles and
+boost gates with a warden boss at the far end. Ship state and score survive
+article round-trips; the best score sticks. All sound is synthesized WebAudio
+(`M` mutes) — no audio assets. Click a planet (or dock and press `↵`) to open
+the article. Article pages keep a quiet ambient field behind a readable HUD
+panel, with a "return to system" chip (`esc` works too). The world reads the
+post list straight from the DOM, mounts/unmounts live with the switcher, and
+the other styles never pay for it. No WebGL? The CRT fallback is a complete
+theme on its own.
 
 Each style is one CSS file in `src/styles/` that overrides a token contract
 (colors, fonts, radii, border weight) plus its own signature moves under

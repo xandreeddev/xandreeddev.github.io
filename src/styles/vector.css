@@ -241,6 +241,11 @@
   box-shadow: 0 0 8px oklch(72% 0.24 340 / 0.5);
 }
 
+.vector-hud .vh-bar.shield i {
+  background: oklch(80% 0.13 230 / 0.85);
+  box-shadow: 0 0 8px oklch(80% 0.13 230 / 0.5);
+}
+
 .vector-hud .vh-stats {
   margin-top: 0.15rem;
   font-size: 1rem;
@@ -452,10 +457,180 @@
   box-shadow: 0 0 14px oklch(87% 0.21 155 / 0.4);
 }
 
+/* ----- corner buttons: ability tree + sound ----- */
+
+.vector-hud .vh-corner {
+  position: absolute;
+  top: 6.6rem;
+  right: 1.2rem;
+  display: flex;
+  gap: 0.4rem;
+  pointer-events: auto;
+}
+
+.vector-hud .vh-corner button {
+  font-family: 'VT323', monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0.7rem;
+  min-height: 2.2rem;
+  color: oklch(87% 0.21 155);
+  background: oklch(10% 0.02 165 / 0.78);
+  border: 1px solid oklch(87% 0.21 155 / 0.5);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.vector-hud .vh-corner button:hover {
+  text-shadow: var(--vec-glow);
+}
+
+/* ----- ability tree panel ----- */
+
+.vector-hud .vh-tree {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(56rem, calc(100vw - 1.6rem));
+  max-height: min(34rem, calc(100dvh - 7rem));
+  overflow: auto;
+  pointer-events: auto;
+  padding: 1rem 1.2rem 0.7rem;
+  background: oklch(8% 0.016 165 / 0.93);
+  border: 1px solid oklch(87% 0.21 155 / 0.5);
+  box-shadow: 0 0 60px -18px oklch(87% 0.21 155 / 0.6);
+}
+
+.vector-hud .vh-tree[hidden] {
+  display: none;
+}
+
+.vh-tree-head {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.vh-tree-head b {
+  font-weight: 400;
+  font-size: 1.5rem;
+  color: oklch(87% 0.21 155);
+  text-shadow: var(--vec-glow);
+}
+
+.vh-tree-head span {
+  font-size: 1.05rem;
+  color: oklch(82% 0.13 75);
+}
+
+.vh-tree-head button {
+  margin-left: auto;
+  font-family: 'VT323', monospace;
+  font-size: 1rem;
+  padding: 0.25rem 0.6rem;
+  color: oklch(71% 0.09 155);
+  background: transparent;
+  border: 1px solid oklch(87% 0.21 155 / 0.35);
+  cursor: pointer;
+}
+
+.vh-tree-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.9rem;
+}
+
+.vh-branch {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+}
+
+.vh-branch h3 {
+  margin: 0;
+  font-weight: 400;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  color: oklch(72% 0.24 340);
+}
+
+.vh-node {
+  display: grid;
+  gap: 0.12rem;
+  text-align: left;
+  font-family: 'VT323', monospace;
+  padding: 0.55rem 0.7rem;
+  min-height: 3rem;
+  color: oklch(93% 0.05 155);
+  background: oklch(13% 0.022 165 / 0.7);
+  border: 1px solid oklch(87% 0.21 155 / 0.3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.vh-node b {
+  font-weight: 400;
+  font-size: 1.2rem;
+  color: oklch(87% 0.21 155);
+}
+
+.vh-node span {
+  font-size: 0.95rem;
+  color: oklch(71% 0.09 155);
+}
+
+.vh-node i {
+  font-style: normal;
+  font-size: 0.95rem;
+  color: oklch(82% 0.13 75);
+}
+
+.vh-node.owned {
+  border-color: oklch(87% 0.21 155 / 0.7);
+  box-shadow: inset 0 0 14px oklch(87% 0.21 155 / 0.12);
+  cursor: default;
+}
+
+.vh-node.owned i {
+  color: oklch(87% 0.21 155);
+}
+
+.vh-node.locked {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vh-node.can:hover {
+  border-color: oklch(87% 0.21 155);
+  box-shadow: 0 0 18px -6px oklch(87% 0.21 155 / 0.6);
+}
+
+.vh-tree-hint {
+  margin: 0.8rem 0 0;
+  font-size: 0.95rem;
+  color: oklch(53% 0.07 155);
+}
+
+/* world mode: the page must never zoom or scroll out from under the stick */
+[data-style='vector'][data-world='on'] body {
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
 @media (pointer: coarse) {
   /* the overlay explains touch; the keyboard legend is noise */
   .vector-hud .vh-help {
     display: none;
+  }
+
+  /* comfortable thumb targets for the corner pair */
+  .vector-hud .vh-corner button {
+    min-height: 2.75rem;
+    font-size: 1.15rem;
   }
 
   /* keep the dock card clear of the right-thumb cluster */
@@ -496,11 +671,17 @@
   .vector-hud .vh-top {
     display: none;
   }
+  .vector-hud .vh-corner {
+    top: 4.2rem;
+  }
   .vector-hud .vh-help {
     font-size: 0.8rem;
     white-space: normal;
     text-align: center;
     width: 90vw;
+  }
+  .vh-tree-grid {
+    grid-template-columns: 1fr;
   }
 }
 
