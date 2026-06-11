@@ -12,9 +12,39 @@ Effect.Effect<A, E, R>
 // a program that succeeds with A, fails with E, and needs R to run
 ```
 
-An `Effect` is a *value* describing a program, not a running program. That one move — programs as values — is what makes everything below composable: values can be stored, passed, substituted, retried, raced, and interrupted. The three type parameters are the three acts of this post: `R` is dependencies, `E` is failures, and the runtime that executes fibers is concurrency.
+The three type parameters are the three acts of this post: `R` is dependencies, `E` is failures, and the runtime that executes them is concurrency.
 
 Nothing here is a toy. Every snippet is lifted from [efferent](https://github.com/xandreeddev/agent), a coding agent I'm building on Effect — long-running, concurrent, full of slow IO and humans who press Esc at inconvenient moments. Which is to say: a stress test for exactly the three channels.
+
+## Prelude: what an Effect actually is
+
+Before the acts, the sixty-second mental model. A Promise runs the moment you create it. An `Effect` doesn't — it's a *description* of a program, inert until something executes it:
+
+```ts
+const random = Effect.sync(() => Math.random())  // wraps synchronous code
+const body = Effect.tryPromise(() => fetch(url).then((r) => r.text())) // wraps a Promise
+const config = Effect.succeed({ retries: 3 })    // lifts a plain value
+```
+
+None of those lines *did* anything. Composing them is where the value-ness starts paying. `Effect.gen` is the everyday workhorse — it reads exactly like `async/await`, with `yield*` where you'd write `await`:
+
+```ts
+const program = Effect.gen(function* () {
+  const text = yield* body      // "await" an effect
+  const roll = yield* random
+  return roll > 0.5 ? text : text.toUpperCase()
+})
+// still — nothing has run
+```
+
+`program` is an ordinary value. You can store it, pass it to a function, retry it, race it against another program, run it a thousand times concurrently. Execution happens once, at the edge, when a description is handed to a runtime:
+
+```ts
+const result = await Effect.runPromise(program) // the only line that runs anything
+// Effect.runSync(random)                       // same idea, for a purely sync effect
+```
+
+That's the full model: build one big description out of small ones, run it once at the entry point — efferent does exactly this, a single `BunRuntime.runMain` at the bottom of `main.ts`. Everything else in this post — services, layers, typed errors, fibers — is leverage that falls out of programs being values you can manipulate before they run. Hold onto `yield*` ("run this effect, give me its success value"); it's in every snippet from here on.
 
 ## Act I — the R channel: services are tags
 
@@ -27,6 +57,10 @@ export class ConversationStoreError extends Data.TaggedError(
   readonly cause: unknown
   readonly message: string
 }> {}
+
+export class ConversationNotFound extends Data.TaggedError(
+  'ConversationNotFound',
+)<{ readonly id: string }> {}
 
 export class ConversationStore extends Context.Tag(
   '@efferent/core/ConversationStore',
@@ -43,13 +77,13 @@ export class ConversationStore extends Context.Tag(
 >() {}
 ```
 
-Using a service is one line — `const store = yield* ConversationStore` — and the act of using it adds the tag to the effect's `R`. That's the part that changes how a codebase feels: **the R channel is the architecture, inferred.** A use-case that reads the store and runs shell commands has type `Effect<A, E, ConversationStore | Shell>`, whether or not you remembered to document that. You cannot quietly reach into the database from a function whose type says it doesn't.
+(The `Data.TaggedError` at the top is Act II's subject — for now, read it as a failure type with a name.) Using a service is one line — `const store = yield* ConversationStore` — and the act of using it adds the tag to the effect's `R`. That's the part that changes how a codebase feels: **the R channel is the architecture, inferred.** A use-case that reads the store and runs shell commands has type `Effect<A, E, ConversationStore | Shell>`, whether or not you remembered to document that. You cannot quietly reach into the database from a function whose type says it doesn't.
 
 This is ports-and-adapters, but with the dependency direction enforced by the compiler. [efferent](https://github.com/xandreeddev/agent)'s core package declares twelve such tags — `FileSystem`, `Shell`, `Approval`, `AuthStore`, `ModelRegistry`, `SettingsStore`, and so on — and imports zero provider SDKs. The adapters package implements them. Core compiles without knowing Postgres exists.
 
 ## Act I, scene 2 — layers: constructors as values
 
-A `Layer<Out, Err, In>` is a recipe for building services out of other services. `Layer.succeed` wraps a value, `Layer.effect` runs an effect to construct one, `Layer.scoped` ties the service to a resource lifetime. Like effects, layers are values — so wiring an application is an expression:
+A `Layer<Out, Err, In>` is a recipe for building services out of other services. `Layer.succeed` wraps a value, `Layer.effect` runs an effect to construct one, `Layer.scoped` ties the service to a resource lifetime. Like effects, layers are values — so wiring an application is an expression. Here's the deep end first; every operator in it gets unpacked right below:
 
 ```ts title="packages/cli/src/main.ts"
 // Credentials + settings feed the model/search tiers. Both are provided at the
@@ -66,8 +100,7 @@ const AppLive = Layer.mergeAll(
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
-  HttpLive,
-  AuthFlowLive,
+  // …
   WebSearchLive.pipe(Layer.provide(FetchHttpClient.layer)),
   UtilityLlmLive.pipe(
     Layer.provide(ModelRegistryLive),
@@ -139,6 +172,40 @@ export const ApprovalAllowAllLive = Layer.succeed(
 
 Just as telling is what *didn't* change: the model layer is the real router hitting real providers, and the filesystem and shell are the real adapters pointed at a disposable temp workspace. The swap is surgical because every seam was already a tag. Unit tests cut deeper — they substitute a scripted `LanguageModel` and run the whole loop against canned responses. Nobody wrote a mocking framework; substitution is what layers *are*. (The eval design itself deserves its own post.)
 
+## Interlude — Scope: resource lifetimes as values
+
+That throwaway workspace is worth slowing down for, because it demos the Effect feature I'd miss most anywhere else. Every resource has the same three-beat life — acquire it, use it, release it — and in Promise-land the third beat is a `finally` you *hope* runs. Mostly it does. It doesn't when the process is interrupted mid-use, when an error throws past it, or when someone cancels the work — which a Promise can't even express. Effect makes the three beats one value:
+
+```ts
+const result = Effect.acquireUseRelease(
+  openConnection(db),            // acquire
+  (conn) => runQuery(conn, q),   // use
+  (conn) => conn.close,          // release — runs on success, failure, OR interrupt
+)
+```
+
+The guarantee is the feature: the release runs *no matter how the use ends*, including interruption — the case every hand-rolled cleanup forgets. Here's the real one behind the eval environment:
+
+```ts title="packages/evals/src/support/workspace.ts"
+export const withTempWorkspace = <A, E, R>(
+  files: Record<string, string>,
+  use: (dir: string) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const dir = mkdtempSync(join(tmpdir(), 'agent-eval-'))
+      // …materialise `files` into it
+      return dir
+    }),
+    use,
+    (dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true })), // [!code highlight]
+  )
+```
+
+Every eval case gets a fresh directory and *cannot* leak it. A failing scorer, a thrown decode error, Ctrl-C halfway through the suite — the directory is gone in all three endings, and nobody wrote three cleanup paths.
+
+A `Scope` is this idea reified: a lifetime, as a value, that any number of acquisitions can attach to — when the scope closes, every finalizer runs in reverse order. You rarely touch one directly; you meet it through the combinators that open one around a region: `Layer.scoped` ties a service to the application's lifetime (its finalizer runs at shutdown), and `Effect.scoped` / `Stream.unwrapScoped` open a scope around a single call. That last one is the next section's whole move.
+
 ## Where layers stop
 
 One discipline keeps this from going wrong: **layers answer "the program is different"; state answers "the request is different."** Tests run a different program — layer swap. A user switching LLM providers mid-session is changing a preference — that must *not* be a layer, or you're rebuilding the runtime to honor a dropdown.
@@ -148,17 +215,15 @@ One discipline keeps this from going wrong: **layers answer "the program is diff
 ```ts title="packages/adapters/src/llm/router.ts"
 streamText: (options) =>
   Stream.unwrapScoped( // [!code highlight]
-    registry.current.pipe(
-      Effect.flatMap((sel) =>
-        resolveAndBuild(sel).pipe(
-          Effect.map(({ svc }) => svc.streamText(options)), // …
-        ),
-      ),
-    ),
+    Effect.gen(function* () {
+      const sel = yield* registry.current          // the live `:model` choice
+      const { svc } = yield* resolveAndBuild(sel)  // resolve key, build the client
+      return svc.streamText(options)
+    }),
   ),
 ```
 
-The piece that's pure Effect semantics is the `Scoped` suffix. A `Scope` is a resource lifetime you can attach acquisitions to; `Stream.unwrapScoped` opens one around the stream, so the provider client built inside lives exactly as long as that one call — released on completion, failure, *or interruption*, with no cleanup code at the call site. The full argument for runtime provider selection is a post of its own; the point here is that "request-scoped" is a first-class thing you can say in the type system.
+The `Scoped` suffix is the interlude's idea opened around a stream: the provider client built inside lives exactly as long as this one call — released on completion, failure, *or interruption*, with no cleanup code at the call site. "Request-scoped" isn't a comment here; it's the type. (The full argument for runtime provider selection is a post of its own.)
 
 ## Act II — the E channel: failures are data
 
@@ -167,24 +232,20 @@ Effect's second channel makes failure modes part of a function's interface. `Dat
 In an agent, the error channel has an unusual second consumer: not just humans, but *the model*. [efferent](https://github.com/xandreeddev/agent)'s tools all declare `failureMode: 'return'` — a handler failure becomes a tool **result** the model reads and reacts to, not an exception that kills the turn. The interesting case is failures the tool handler never sees, because the model's arguments didn't even decode:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
-export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>>(
-  base: Toolkit.WithHandler<Tools>,
-): Toolkit.WithHandler<Tools> => {
-  // …
-  const handle = (name: unknown, params: unknown) =>
-    rawHandle(name, params).pipe(
-      Effect.catchAll((err) => {
-        const e = err as { readonly _tag: string; readonly description: string } // …
-        if (e._tag !== 'MalformedOutput') return Effect.fail(err) // [!code highlight]
-        const failure = {
-          error: 'InvalidToolCall',
-          message: `… the arguments did not match the tool's schema; re-call the tool with parameters that match its documented shape.`,
-        }
-        return Effect.succeed({ isFailure: true, result: failure, encodedResult: failure })
-      }),
-    )
-  return { tools: base.tools, handle } // …
-}
+// Wrap the toolkit's handler so a model-caused decode failure
+// becomes a tool *result* instead of aborting the turn.
+const handle = (name: unknown, params: unknown) =>
+  base.handle(name, params).pipe(
+    Effect.catchAll((err) => {
+      const e = err as { _tag: string; description: string } // …
+      if (e._tag !== 'MalformedOutput') return Effect.fail(err) // [!code highlight]
+      const failure = {
+        error: 'InvalidToolCall',
+        message: `… the arguments did not match the tool's schema; re-call the tool with parameters that match its documented shape.`,
+      }
+      return Effect.succeed({ isFailure: true, result: failure })
+    }),
+  )
 ```
 
 The highlighted line encodes a policy that would be mush in a `try/catch` world: `MalformedOutput` is *the model's* bug (bad arguments), so convert it into feedback and keep looping — the model corrects itself next turn. `MalformedInput` is *our* bug (a result that doesn't match our own schema), so let it surface. Tagged errors make "whose fault is this?" a branch on data.
@@ -208,7 +269,9 @@ This is the LLM judge that pre-screens bash approvals. Its `E` channel says `nev
 
 ## Act III — the concurrency toolkit
 
-Effect programs run on **fibers**: cheap cooperative threads, structured so children can't outlive parents, with interruption that runs finalizers instead of abandoning work. On top of fibers sits a small standard library of coordination primitives. What sold me wasn't any one of them — it's that one real system needs *all* of them at once, and they compose because each is just another effect value on the same runtime.
+Effect programs run on **fibers** — lightweight threads, cheap enough to have tens of thousands. Every running effect is on one (your whole program starts as a single fiber at `runMain`), `Effect.fork` starts a child, and combinators like `Effect.all` or a `concurrency` option fork and join them for you — most of the time you say *how much* parallelism you want and never touch a fiber directly. Two properties make them safe where raw Promises aren't: they're **structured**, so a child can't outlive its parent's scope, and they're **interruptible**, so cancellation runs finalizers instead of abandoning work mid-flight.
+
+On top of fibers sits a small standard library of coordination primitives. What sold me wasn't any one of them — it's that one real system needs *all* of them at once, and they compose because each is just another effect value on the same runtime.
 
 One turn of [efferent](https://github.com/xandreeddev/agent) can have four tool handlers in flight, three sub-agents fanning out across folders, a UI fiber painting tokens, and a human deciding whether to allow `rm`. Here's the toolkit that holds it together.
 
@@ -232,12 +295,8 @@ A `Queue` is the classic producer/consumer seam, used here to decouple agent fib
 
 ```ts title="packages/cli/src/tui-solid/runtime.ts"
 const eventQueue = yield* Queue.unbounded<AgentEvent>()
-const baseHooks = makeEventHooks(eventQueue)
-const scopeRuntime = buildScopeRuntime(
-  input.rootScope,
-  { skills: input.skills, allowBash: true },
-  baseHooks,
-)
+const hooks = makeEventHooks(eventQueue) // every loop hook offers onto the queue
+// …the agent loop runs with these hooks; one consumer fiber drains the queue
 ```
 
 Hooks deep inside the loop — assistant deltas, tool starts, sub-agent spawns — offer events onto the queue from whatever fiber they're on; one consumer fiber drains it into Solid signals. Unbounded is a deliberate choice ratified by the type: rendering must never apply backpressure to an agent turn. (What happens on the other side of that queue — fine-grained SolidJS signals, no React — is a post of its own.)
@@ -330,7 +389,7 @@ const ask = (req: ApprovalRequest) =>
 
 ### The unifying semantics: interruption
 
-Press Esc mid-turn and watch what one interrupt does: the in-flight `generateText` HTTP request aborts, the four tool-handler fibers unwind, sub-agent trees stop at safe boundaries, the approval modal's cleanup closes it, semaphore permits release, the call-scoped provider client from Act I is disposed by its `Scope`. I wrote none of that as shutdown code. It falls out of every primitive being a value on the same runtime with the same interruption protocol — which is the real argument for using the toolkit instead of hand-rolling each piece around `AbortController`.
+Press Esc mid-turn and watch what one interrupt does: the in-flight `generateText` HTTP request aborts, the four tool-handler fibers unwind, sub-agent trees stop at safe boundaries, the approval modal's cleanup closes it, semaphore permits release, the call-scoped provider client is disposed by its `Scope`, the eval workspace from the interlude is deleted. I wrote none of that as shutdown code. It falls out of every primitive being a value on the same runtime with the same interruption protocol — which is the real argument for using the toolkit instead of hand-rolling each piece around `AbortController`.
 
 ## The service you didn't write
 
