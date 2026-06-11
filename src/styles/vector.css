@@ -1,0 +1,394 @@
+/* ---------------------------------------------------------------------------
+   VECTOR — the context overworld.
+   Phosphor vector-display chrome: near-black green void, glowing wireframe
+   green, one magenta signal. VT323 display over JetBrains Mono text. The
+   3D world (vector-world.js) mounts behind this; everything here is a
+   complete CRT theme on its own, so no-JS / no-WebGL still ships a design.
+--------------------------------------------------------------------------- */
+
+[data-style='vector'] {
+  color-scheme: dark;
+
+  --font-body: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'VT323', 'JetBrains Mono Variable', monospace;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --bg: oklch(9% 0.016 165);
+  --surface: oklch(13% 0.022 165);
+  --surface-2: oklch(17% 0.026 165);
+  --border: oklch(87% 0.21 155 / 0.28);
+  --text: oklch(93% 0.05 155);
+  --text-2: oklch(71% 0.09 155);
+  --text-3: oklch(53% 0.07 155);
+  --accent: oklch(87% 0.21 155);
+  --accent-dim: oklch(87% 0.21 155 / 0.1);
+  --ok-dim: oklch(75% 0.12 150 / 0.14);
+  --bad-dim: oklch(65% 0.15 25 / 0.14);
+
+  --vec-magenta: oklch(72% 0.24 340);
+  --vec-amber: oklch(82% 0.13 75);
+  --vec-glow: 0 0 9px oklch(87% 0.21 155 / 0.55);
+
+  --radius-s: 0px;
+  --radius-m: 0px;
+  --border-w: 1px;
+  --display-weight: 400;
+}
+
+[data-style='vector'] .brand-mark::before,
+[data-style='vector'] .sw-glyph::before {
+  content: '◆';
+}
+
+[data-style='vector'] body {
+  font-size: calc(var(--step-0) * 0.9);
+  line-height: 1.7;
+}
+
+/* CRT scanlines over everything, faint */
+[data-style='vector'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, oklch(0% 0 0 / 0.09) 0 1px, transparent 1px 4px);
+}
+
+/* the 3D canvas sits behind the DOM */
+.vector-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  touch-action: none;
+}
+
+.vector-canvas.is-ambient {
+  pointer-events: none;
+}
+
+[data-style='vector'] :is(.site-header, main, .site-footer, .deco) {
+  position: relative;
+  z-index: 1;
+}
+
+/* world mode (home with WebGL): the canvas IS the page. Content stays in the
+   accessibility tree; footer chrome gets out of the way. */
+[data-style='vector'][data-world='on'] body {
+  overflow: hidden;
+  height: 100dvh;
+}
+
+[data-style='vector'][data-world='on'] main {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[data-style='vector'][data-world='on'] .site-footer {
+  display: none;
+}
+
+/* ----- header: a thin HUD bar ----- */
+
+[data-style='vector'] .site-header {
+  background: oklch(8% 0.016 165 / 0.72);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+[data-style='vector'] .brand {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .brand .brand-mark {
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .site-nav a {
+  font-size: 0.74rem;
+}
+
+[data-style='vector'] .site-nav a:hover,
+[data-style='vector'] .site-nav a[aria-current='page'] {
+  color: var(--accent);
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .style-menu {
+  background: oklch(10% 0.02 165 / 0.95);
+  box-shadow: 0 0 0 1px oklch(87% 0.21 155 / 0.12), 0 18px 50px oklch(0% 0 0 / 0.6);
+}
+
+/* ----- HUD overlay injected by the world ----- */
+
+.vector-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  font-family: 'VT323', monospace;
+  color: oklch(71% 0.09 155);
+}
+
+.vector-hud .vh-top {
+  position: absolute;
+  top: 4.2rem;
+  right: 1.2rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  color: oklch(87% 0.21 155 / 0.8);
+  text-shadow: 0 0 8px oklch(87% 0.21 155 / 0.4);
+}
+
+.vector-hud .vh-help {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.98rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  color: oklch(53% 0.07 155);
+}
+
+.vector-hud .vh-caption {
+  position: absolute;
+  bottom: 2.9rem;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(46rem, 86vw);
+  text-align: center;
+  font-size: 1.2rem;
+  line-height: 1.35;
+  color: oklch(72% 0.24 340);
+  text-shadow: 0 0 10px oklch(72% 0.24 340 / 0.45);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.vector-hud .vh-caption.on {
+  opacity: 1;
+}
+
+.vector-hud .vh-caption b {
+  font-weight: 400;
+  color: oklch(93% 0.05 155);
+  text-shadow: 0 0 10px oklch(87% 0.21 155 / 0.6);
+}
+
+@media (max-width: 640px) {
+  .vector-hud .vh-top {
+    display: none;
+  }
+  .vector-hud .vh-help {
+    font-size: 0.8rem;
+    white-space: normal;
+    text-align: center;
+    width: 90vw;
+  }
+}
+
+/* ----- home fallback (no world running): CRT index ----- */
+
+[data-style='vector'] .intro p {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  line-height: 1.25;
+  color: var(--text);
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .intro .sub {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+
+[data-style='vector'] .year-group > .label::before {
+  content: '── ';
+  color: var(--text-3);
+}
+
+[data-style='vector'] .year-group > .label {
+  border-bottom: 0;
+  color: var(--accent);
+}
+
+[data-style='vector'] .post-row {
+  background: oklch(13% 0.022 165 / 0.6);
+  border: 1px solid oklch(87% 0.21 155 / 0.2);
+  padding: 1rem 1.15rem;
+  margin-top: 0.9rem;
+}
+
+[data-style='vector'] .post-row:hover {
+  border-color: oklch(87% 0.21 155 / 0.6);
+  box-shadow: 0 0 24px -8px oklch(87% 0.21 155 / 0.4);
+}
+
+[data-style='vector'] .post-row .title {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  line-height: 1.15;
+}
+
+[data-style='vector'] .post-row:hover .title {
+  text-shadow: var(--vec-glow);
+}
+
+/* ----- reading pages: HUD panel over the void ----- */
+
+[data-style='vector'] .post-wrap,
+[data-style='vector'] .page {
+  background: oklch(10% 0.02 165 / 0.82);
+  border: 1px solid oklch(87% 0.21 155 / 0.35);
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
+  box-shadow: 0 0 60px -24px oklch(87% 0.21 155 / 0.45), inset 0 0 0 1px oklch(0% 0 0 / 0.3);
+  padding: 3.1rem 2rem 2.2rem;
+  margin-block: 2.4rem 1.5rem;
+}
+
+[data-style='vector'] .post-wrap::before,
+[data-style='vector'] .page::before {
+  content: '◆ ctx node — connected';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 0.4rem 1rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  color: oklch(87% 0.21 155 / 0.75);
+  border-bottom: 1px solid oklch(87% 0.21 155 / 0.25);
+}
+
+[data-style='vector'] .page {
+  position: relative;
+  padding-top: 3.1rem;
+}
+
+[data-style='vector'] .post-header .meta {
+  font-size: 0.72rem;
+}
+
+[data-style='vector'] .post-header .meta .tag {
+  color: var(--vec-magenta);
+}
+
+[data-style='vector'] .post-header h1,
+[data-style='vector'] .page h1 {
+  font-size: clamp(2.1rem, 1.8rem + 2vw, 3.1rem);
+  line-height: 1.05;
+  letter-spacing: 0.015em;
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .post-header .lede {
+  font-style: normal;
+  font-size: var(--step-0);
+  color: var(--text-2);
+}
+
+[data-style='vector'] .prose h2,
+[data-style='vector'] .prose h3 {
+  letter-spacing: 0.02em;
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .prose h2::before {
+  content: '▸ ';
+  color: var(--vec-magenta);
+}
+
+[data-style='vector'] .prose h4 {
+  font-style: normal;
+}
+
+[data-style='vector'] a:hover {
+  color: var(--accent);
+  text-shadow: var(--vec-glow);
+}
+
+[data-style='vector'] .prose blockquote {
+  font-style: normal;
+  border-left: 2px solid var(--vec-magenta);
+  background: oklch(72% 0.24 340 / 0.06);
+  padding: 0.7em 1.1em;
+  color: var(--text);
+}
+
+[data-style='vector'] .prose img {
+  border-color: oklch(87% 0.21 155 / 0.35);
+}
+
+[data-style='vector'] .prose table {
+  font-size: 0.74rem;
+}
+
+[data-style='vector'] hr {
+  border-top: 1px dashed oklch(87% 0.21 155 / 0.4);
+}
+
+/* code: a darker pane of the same instrument */
+[data-style='vector'] .prose pre.astro-code {
+  background: oklch(7% 0.014 165 / 0.9) !important;
+  border-color: oklch(87% 0.21 155 / 0.3);
+  font-size: 0.78rem;
+  box-shadow: 0 0 30px -14px oklch(87% 0.21 155 / 0.5);
+}
+
+[data-style='vector'] pre.astro-code[data-title]::before {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: oklch(87% 0.21 155 / 0.8);
+}
+
+[data-style='vector'] .prose code:not(pre code) {
+  background: oklch(87% 0.21 155 / 0.08);
+  border-color: oklch(87% 0.21 155 / 0.25);
+}
+
+[data-style='vector'] .code-block .copy {
+  background: oklch(10% 0.02 165 / 0.9);
+  border-color: oklch(87% 0.21 155 / 0.35);
+  color: var(--accent);
+}
+
+[data-style='vector'] .code-block .copy:hover,
+[data-style='vector'] .code-block .copy.ok {
+  text-shadow: var(--vec-glow);
+}
+
+/* footer */
+[data-style='vector'] .site-footer {
+  background: oklch(8% 0.016 165 / 0.7);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+[data-style='vector'] .draft-badge {
+  color: var(--vec-amber);
+  border-color: oklch(82% 0.13 75 / 0.45);
+  background: oklch(82% 0.13 75 / 0.1);
+}
+
+[data-style='vector'] .terminal-404 {
+  background: oklch(7% 0.014 165 / 0.9);
+}
+
+[data-style='vector'] .toc-mobile {
+  background: oklch(13% 0.022 165 / 0.6);
+}

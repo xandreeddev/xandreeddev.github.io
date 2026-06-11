@@ -4,8 +4,10 @@ Source for [xandreed.dev](https://xandreed.dev) — writing on Effect, agents, a
 published alongside [efferent](https://github.com/xandreeddev/agent), an open-source
 coding agent built on Effect.ts.
 
-**No React.** No framework JavaScript at all, in fact. The site ships hand-written CSS,
-two small inline scripts (style switching and copy buttons), and nothing else.
+**No React.** No framework JavaScript at all, in fact. The site ships hand-written CSS
+and two small inline scripts (style switching and copy buttons). The one exception is
+opt-in: the `vector` style lazy-loads a vanilla Three.js chunk — only when you pick it —
+and turns the homepage into a flyable star system.
 
 ## Stack
 
@@ -27,6 +29,16 @@ visit follows `prefers-color-scheme` (dark → phosphor, light → gazette).
 | aurora   | signal lab         | Syne · Hanken · Victor Mono   |
 | zine     | xerox riot         | Archivo · Space Mono          |
 | system   | retro desk         | Silkscreen · Chivo · Fragment |
+| vector   | context overworld  | VT323 · JetBrains Mono        |
+
+In **vector**, the blog is efferent's context tree as a star system: the core is the
+sun, every post is a wireframe planet (one moon per tag, amber if draft), and you
+pilot a little vector ship — aim with the pointer, hold click or `W` to thrust,
+`shift` boosts, scroll fires a burst. Click a planet (or dock and press `↵`) to open
+the article; article pages keep a quiet ambient field behind a readable HUD panel.
+The world reads the post list straight from the DOM, mounts/unmounts live with the
+switcher, and the other styles never pay for it. No WebGL? The CRT fallback is a
+complete theme on its own.
 
 Each style is one CSS file in `src/styles/` that overrides a token contract
 (colors, fonts, radii, border weight) plus its own signature moves under
