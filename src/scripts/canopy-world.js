@@ -29,7 +29,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const SKY = 0xa8d8f0;
+const SKY = 0xa9cdf2;
 const LEAF = 0x3f9e52;
 const GOLD = 0xf0b432;
 const WOOD = 0x8a5a33;
@@ -478,7 +478,7 @@ export function mount() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(SKY);
-  scene.fog = new THREE.Fog(0xc9e7f2, 120, 420);
+  scene.fog = new THREE.Fog(0xd3def5, 120, 420);
 
   /* gradient sky dome + sun disc — a flat clear color reads like a void */
   const skyMat = new THREE.ShaderMaterial({
@@ -496,14 +496,14 @@ export function mount() {
       varying vec3 vDir;
       void main() {
         float h = clamp(vDir.y, 0.0, 1.0);
-        vec3 zenith = vec3(0.32, 0.62, 0.92);
-        vec3 horizon = vec3(0.82, 0.92, 0.95);
+        vec3 zenith = vec3(0.30, 0.56, 0.94);
+        vec3 horizon = vec3(0.88, 0.85, 0.97); /* pink-lavender, not white */
         vec3 col = mix(horizon, zenith, smoothstep(0.02, 0.55, h));
         vec3 sdir = normalize(vec3(0.49, 0.76, 0.33));
         float sd = dot(vDir, sdir);
         col += vec3(1.0, 0.95, 0.78) * smoothstep(0.9985, 0.9995, sd);          /* disc */
         col += vec3(1.0, 0.9, 0.6) * pow(max(sd, 0.0), 90.0) * 0.28;            /* halo */
-        col = mix(col, vec3(0.86, 0.93, 0.9), smoothstep(0.12, 0.0, vDir.y));   /* haze */
+        col = mix(col, vec3(0.87, 0.88, 0.96), smoothstep(0.12, 0.0, vDir.y));  /* haze */
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
@@ -526,7 +526,9 @@ export function mount() {
   composer.setPixelRatio(pr);
   composer.setSize(innerWidth, innerHeight);
   const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.25, 0.5, 0.9);
-  /* day grade: the gentlest vignette, display-referred (after OutputPass) */
+  /* day grade: split-tone + vibrance + the gentlest vignette, display-
+     referred (after OutputPass). Daylight cut of the toy-render look:
+     shadows cool into lavender, highlights warm into cream */
   const gradePass = new ShaderPass({
     uniforms: { tDiffuse: { value: null } },
     vertexShader: `
@@ -541,6 +543,10 @@ export function mount() {
       void main() {
         vec2 c = vUv - 0.5;
         vec3 col = texture2D(tDiffuse, vUv).rgb;
+        float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col += vec3(0.028, 0.022, 0.06) * (1.0 - smoothstep(0.0, 0.45, luma));
+        col *= mix(vec3(1.0), vec3(1.04, 1.0, 0.94), smoothstep(0.6, 1.0, luma) * 0.5);
+        col = mix(vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), col, 1.12);
         col *= 1.0 - smoothstep(0.2, 0.9, dot(c, c)) * 0.16;
         gl_FragColor = vec4(col, 1.0);
       }`,
@@ -607,11 +613,13 @@ export function mount() {
 
   /* ----- light: high sun, soft shadows ----- */
 
-  scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x7fae6a, 1.05));
-  const sun = new THREE.DirectionalLight(0xfff2da, 2.4);
+  /* sky side leans lavender so shade reads as cool color, not gray —
+     the ground side keeps the warm grass bounce */
+  scene.add(new THREE.HemisphereLight(0xaebcff, 0x86ae6e, 1.1));
+  const sun = new THREE.DirectionalLight(0xffeecf, 2.4);
   sun.castShadow = true;
   sun.shadow.mapSize.setScalar(coarse ? 1024 : 2048);
-  sun.shadow.radius = 7;
+  sun.shadow.radius = 10;
   sun.shadow.camera.left = -70;
   sun.shadow.camera.right = 70;
   sun.shadow.camera.top = 70;

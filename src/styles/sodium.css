@@ -14,9 +14,9 @@
   --font-display: 'Michroma', 'Outfit Variable', sans-serif;
   --font-mono: 'Martian Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --bg: oklch(14% 0.03 260);
-  --surface: oklch(18% 0.032 258);
-  --surface-2: oklch(22.5% 0.034 256);
+  --bg: oklch(14% 0.046 292);
+  --surface: oklch(18% 0.048 291);
+  --surface-2: oklch(22.5% 0.05 290);
   --border: oklch(78% 0.14 60 / 0.22);
   --text: oklch(94% 0.012 80);
   --text-2: oklch(73% 0.02 75);
@@ -44,8 +44,8 @@
 [data-style='sodium'] body {
   background:
     radial-gradient(120% 60% at 50% 108%, oklch(45% 0.1 55 / 0.16), transparent 60%),
-    radial-gradient(80% 50% at 85% -10%, oklch(35% 0.07 250 / 0.35), transparent 70%),
-    linear-gradient(180deg, oklch(12% 0.028 262), oklch(15% 0.032 258));
+    radial-gradient(80% 50% at 85% -10%, oklch(35% 0.09 290 / 0.35), transparent 70%),
+    linear-gradient(180deg, oklch(12% 0.044 293), oklch(15% 0.048 291));
   background-attachment: fixed;
 }
 
@@ -56,7 +56,7 @@
 /* ----- header: glass bar with a headlight underline ----- */
 
 [data-style='sodium'] .site-header {
-  background: oklch(13% 0.03 260 / 0.7);
+  background: oklch(13% 0.046 292 / 0.7);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid oklch(78% 0.14 60 / 0.18);
@@ -82,7 +82,7 @@
 }
 
 [data-style='sodium'] .style-menu {
-  background: oklch(14% 0.03 260 / 0.92);
+  background: oklch(14% 0.046 292 / 0.92);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   box-shadow: 0 0 0 1px oklch(78% 0.14 60 / 0.14), 0 24px 60px oklch(0% 0 0 / 0.6);
@@ -122,7 +122,7 @@
   overflow: hidden;
   margin-top: 1rem;
   padding: 1.1rem 1.25rem 1.1rem 1.4rem;
-  background: oklch(18% 0.032 258 / 0.66);
+  background: oklch(18% 0.048 291 / 0.66);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: 1px solid oklch(78% 0.14 60 / 0.14);
@@ -189,7 +189,7 @@
 [data-style='sodium'] .post-wrap,
 [data-style='sodium'] .page {
   position: relative;
-  background: oklch(15% 0.03 260 / 0.78);
+  background: oklch(15% 0.046 292 / 0.78);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   border: 1px solid oklch(78% 0.14 60 / 0.16);
@@ -269,14 +269,14 @@
 }
 
 [data-style='sodium'] .code-block .copy {
-  background: oklch(14% 0.03 260 / 0.9);
+  background: oklch(14% 0.046 292 / 0.9);
   border-color: oklch(78% 0.14 60 / 0.3);
   color: var(--accent);
   border-radius: 6px;
 }
 
 [data-style='sodium'] .site-footer {
-  background: oklch(13% 0.03 260 / 0.6);
+  background: oklch(13% 0.046 292 / 0.6);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
@@ -294,7 +294,7 @@
 }
 
 [data-style='sodium'] .toc-mobile {
-  background: oklch(18% 0.032 258 / 0.66);
+  background: oklch(18% 0.048 291 / 0.66);
   border-radius: var(--radius-s);
 }
 
@@ -382,7 +382,7 @@
   padding: 0.5rem 0.8rem;
   min-height: 2.2rem;
   color: oklch(85% 0.02 80);
-  background: oklch(16% 0.03 260 / 0.7);
+  background: oklch(16% 0.046 292 / 0.7);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: 1px solid oklch(78% 0.14 60 / 0.3);
@@ -408,7 +408,7 @@
   text-align: center;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 50% 50%, oklch(14% 0.03 260 / 0.85) 58%, transparent 59%),
+    radial-gradient(circle at 50% 50%, oklch(14% 0.046 292 / 0.85) 58%, transparent 59%),
     conic-gradient(
       from 220deg,
       oklch(78% 0.15 60) calc(var(--v, 0) * 0.78%),
@@ -458,7 +458,7 @@
   letter-spacing: 0.08em;
   padding: 0.45rem 1rem;
   color: oklch(94% 0.012 80);
-  background: oklch(16% 0.03 260 / 0.82);
+  background: oklch(16% 0.046 292 / 0.82);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: 1px solid oklch(78% 0.14 60 / 0.3);
@@ -493,7 +493,7 @@
   transform: translateX(-50%);
   max-width: min(34rem, calc(100vw - 11rem));
   padding: 0.95rem 1.3rem;
-  background: oklch(16% 0.03 260 / 0.8);
+  background: oklch(16% 0.046 292 / 0.8);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   border: 1px solid oklch(78% 0.14 60 / 0.35);
@@ -536,7 +536,7 @@
   justify-items: center;
   text-align: center;
   padding: 1.3rem 2rem;
-  background: oklch(14% 0.03 260 / 0.7);
+  background: oklch(14% 0.046 292 / 0.7);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   border: 1px solid oklch(78% 0.14 60 / 0.3);
@@ -608,7 +608,7 @@
   padding: 0.9rem;
   min-height: 3.1rem;
   color: oklch(94% 0.012 80);
-  background: oklch(16% 0.03 260 / 0.72);
+  background: oklch(16% 0.046 292 / 0.72);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: 1px solid oklch(78% 0.14 60 / 0.35);
@@ -671,7 +671,7 @@
   padding: 0.5rem 0.9rem;
   color: oklch(78% 0.15 60);
   text-decoration: none;
-  background: oklch(16% 0.03 260 / 0.85);
+  background: oklch(16% 0.046 292 / 0.85);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: 1px solid oklch(78% 0.14 60 / 0.35);

@@ -1,0 +1,7 @@
+{
+  "allowBash": false,
+  "maxSteps": 20,
+  "editorMode": "insert",
+  "model": "opencode:deepseek-v4-flash",
+  "fastModel": "opencode:deepseek-v4-flash"
+}

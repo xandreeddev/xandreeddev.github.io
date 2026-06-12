@@ -160,10 +160,17 @@ Rules that keep it healthy:
 - Rendering (applies to both worlds): the EffectComposer bypasses the canvas's
   MSAA, so each composer renders into a multisampled HalfFloat target — drop the
   `samples` option and every edge becomes a staircase. Sodium's grade pass
-  (vignette / grain / chromatic aberration) must stay AFTER `OutputPass`,
-  display-referred: additive grain in linear HDR lifts night blacks into gray
-  haze. No volumetric headlight cones — the chase camera looks straight down the
-  beam axis, so an additive cone reads as a permanent blob mid-screen.
+  (split-tone / vignette / grain / chromatic aberration) must stay AFTER
+  `OutputPass`, display-referred: additive grain in linear HDR lifts night
+  blacks into gray haze. No volumetric headlight cones — the chase camera looks
+  straight down the beam axis, so an additive cone reads as a permanent blob
+  mid-screen.
+- The toy-render look (both worlds): shadows are a COLOR, never gray — a
+  saturated hemisphere (violet at night, lavender by day) plus a display-
+  referred split-tone in the grade (toe lifts toward violet, highlights warm
+  toward cream, mild vibrance). Sodium's world palette is "purple hour"
+  (`NIGHT 0x191036`), and sodium.css mirrors it — its cool oklch tokens sit at
+  hue ~290 to match the canvas; keep theme and world in the same family.
 - Lighting: streetlights are REAL PointLights (no additive cones/pools), but
   forward rendering pays per light per fragment — only the nearest two are
   `visible` at a time, and the active count must stay CONSTANT or three

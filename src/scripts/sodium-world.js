@@ -30,7 +30,8 @@ import { Water } from 'three/addons/objects/Water.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
-const NIGHT = 0x10142e;
+/* "purple hour", not navy night — shadows must read as color, render-style */
+const NIGHT = 0x191036;
 const SODIUM = 0xffb45e;
 const CYANL = 0xcfe8ff;
 const ROAD_R = 140;
@@ -667,9 +668,11 @@ export function mount() {
   composer.setPixelRatio(pr);
   composer.setSize(innerWidth, innerHeight);
   const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.68, 0.6, 0.78);
-  /* night grade: vignette, radial chromatic aberration, film grain.
-     Runs AFTER OutputPass, display-referred — additive grain in linear
-     HDR lifts a night scene's blacks into gray haze */
+  /* night grade: split-tone, vibrance, vignette, radial chromatic
+     aberration, a whisper of grain. Runs AFTER OutputPass, display-referred —
+     additive grain in linear HDR lifts a night scene's blacks into gray haze.
+     The split-tone is the toy-render signature: the toe lifts into violet
+     (shadows are a COLOR, never black) while highlights warm toward cream */
   const gradePass = new ShaderPass({
     uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
     vertexShader: `
@@ -691,8 +694,12 @@ export function mount() {
         col.r = texture2D(tDiffuse, vUv - ca).r;
         col.g = texture2D(tDiffuse, vUv).g;
         col.b = texture2D(tDiffuse, vUv + ca).b;
+        float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col += vec3(0.045, 0.022, 0.095) * (1.0 - smoothstep(0.0, 0.5, luma));
+        col *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), smoothstep(0.55, 1.0, luma) * 0.6);
+        col = mix(vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), col, 1.16);
         col *= 1.0 - smoothstep(0.15, 0.9, r2) * 0.24;
-        col += (hash(vUv * 1024.0 + fract(uTime) * 7.13) - 0.5) * 0.03;
+        col += (hash(vUv * 1024.0 + fract(uTime) * 7.13) - 0.5) * 0.016;
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
@@ -755,9 +762,9 @@ export function mount() {
       float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
       void main() {
         float h = clamp(vDir.y, -0.05, 1.0);
-        vec3 zenith = vec3(0.022, 0.034, 0.105);
-        vec3 mid = vec3(0.042, 0.06, 0.16);
-        vec3 horizon = vec3(0.19, 0.085, 0.075); /* warm toy-sunset glow */
+        vec3 zenith = vec3(0.05, 0.032, 0.15);
+        vec3 mid = vec3(0.10, 0.06, 0.27);
+        vec3 horizon = vec3(0.40, 0.13, 0.27); /* warm magenta dusk glow */
         vec3 col = mix(horizon, mix(mid, zenith, smoothstep(0.2, 0.8, h)), smoothstep(0.0, 0.22, h));
         /* stars */
         vec3 sp = floor(vDir * 230.0);
@@ -771,11 +778,12 @@ export function mount() {
         float md = dot(vDir, mdir);
         col += vec3(0.8, 0.86, 0.98) * smoothstep(0.99935, 0.99965, md);
         col += vec3(0.2, 0.26, 0.4) * pow(max(md, 0.0), 160.0) * 0.55;
-        /* aurora bands */
+        /* aurora bands — teal-into-pink, tuned to the violet palette */
         float a = smoothstep(0.1, 0.42, vDir.y) * smoothstep(0.95, 0.5, vDir.y);
         float wave = sin(vDir.x * 5.0 + uTime * 0.12) * 0.5 + sin(vDir.z * 7.0 - uTime * 0.08) * 0.5;
         float band = smoothstep(0.22, 0.0, abs(vDir.y - 0.4 - wave * 0.07));
-        col += vec3(0.04, 0.2, 0.13) * band * a * (0.55 + 0.45 * sin(uTime * 0.2 + vDir.x * 3.0));
+        vec3 atint = mix(vec3(0.05, 0.18, 0.2), vec3(0.2, 0.06, 0.18), 0.5 + 0.5 * sin(vDir.x * 2.0 + uTime * 0.1));
+        col += atint * band * a * (0.55 + 0.45 * sin(uTime * 0.2 + vDir.x * 3.0));
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
@@ -790,7 +798,7 @@ export function mount() {
     envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat));
     const envRT = pmrem.fromScene(envScene, 0.04);
     scene.environment = envRT.texture;
-    scene.environmentIntensity = 0.85;
+    scene.environmentIntensity = 1.0;
     envScene.children[0].geometry.dispose();
     pmrem.dispose();
     signal.addEventListener('abort', () => envRT.dispose());
@@ -798,15 +806,15 @@ export function mount() {
 
   /* ----- light ----- */
 
-  /* hemisphere ground bounce leans warm — the sodium road kicks light
-     back up, the cheapest GI there is. The sky side is a strong toy-night
-     blue: everything must stay readable, race2-style */
-  scene.add(new THREE.HemisphereLight(0x4456b8, 0x241a36, 1.0));
-  const moon = new THREE.DirectionalLight(0xa8c0ee, 1.9);
+  /* hemisphere IS the look: a saturated violet sky side means everything
+     in shadow reads as purple, never gray — the toy-render signature.
+     Ground side bounces deep plum back up, the cheapest GI there is */
+  scene.add(new THREE.HemisphereLight(0x6a58d6, 0x3a2158, 1.15));
+  const moon = new THREE.DirectionalLight(0xc8ccf6, 1.9);
   moon.castShadow = true;
   /* 2048 + VSM blur beats 4096 + hard PCF — the blur pass is per-frame */
   moon.shadow.mapSize.setScalar(2048);
-  moon.shadow.radius = 14;
+  moon.shadow.radius = 18;
   moon.shadow.camera.left = -70;
   moon.shadow.camera.right = 70;
   moon.shadow.camera.top = 70;
