@@ -1244,6 +1244,9 @@ export function mount() {
   function popDamage(pos, amount, color = '#eafff2') {
     const p = pops.find((x) => x.life <= 0) ?? pops[0];
     if (!p) return;
+    /* collision damage is fractional (radius math) — a raw float renders
+       17 digits wide and reads as a giant number */
+    amount = Math.max(1, Math.round(amount));
     const ctx = p.c.getContext('2d');
     ctx.clearRect(0, 0, 160, 80);
     ctx.font = '58px VT323, monospace';
