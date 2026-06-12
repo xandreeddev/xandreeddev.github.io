@@ -224,10 +224,24 @@ action-adventure (TERA-berserker kit on a platformer base):
   trail spiral (slug-hashed; any post count works) — closed until read, then
   open with a glow beam. Coins (`canopy-coins`) and boss stars
   (`canopy-stars`) persist; player position round-trips via sessionStorage.
-- Collision is AABB-only (`boxes` + `findGround()`): platforms never rotate.
-  Movers shift their box and carry the player standing on it (`groundBox`).
+- The hub is a rolling heightfield: `terrainH(x, z)` is the single ground
+  truth — the displaced meadow disc, `findGround()`, every placement, the
+  gremlins' feet and the camera floor all read it. Gameplay spots (spawn,
+  trail, chests, camps, gates, the platform yard) sit in flattening wells
+  (`terrainFlat`) so hills never fight the level design. Collision stays
+  AABB (`boxes` + `findGround()`, the hub's round box delegates to
+  terrainH); platforms never rotate; movers carry the player (`groundBox`).
   Jump feel: coyote time + jump buffering + variable height. Don't "fix"
   those as bugs.
+- Camera is Genshin-grammar: drag orbits, wheel zooms 3.2–20 (close reads
+  over-the-shoulder), and while running the yaw eases in behind the player
+  unless the player orbited in the last ~1.6s (`orbitIdleT`).
+- Anything transparent draped over terrain (the trail/contact-shadow
+  overlay, chest glow beams) carries `userData.gtaoSkip` — the GTAO patch
+  parks those alongside sprites, or the AO composite paints everything
+  beneath them black. Contact-shadow blots accumulate on an offscreen
+  union canvas composited once at fixed alpha: 270 trees of stacked
+  per-blot alpha saturate the whole floor to black.
 - The hero, gremlin, ogre and axe are Meshy-generated rigged GLBs in
   `public/models/canopy/` (~4 MB total: meshopt + webp via
   `tools/optimize-glb.mjs` and the gltf-transform CLI; animation GLBs are

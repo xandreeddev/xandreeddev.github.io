@@ -45,7 +45,11 @@ GTAOPass.prototype._overrideVisibility = function () {
   gtaoOverrideVisibility.call(this);
   const cache = this._visibilityCache;
   this.scene.traverse((object) => {
-    if (object.isSprite && object.visible) {
+    /* sprites, and any mesh tagged gtaoSkip (the terrain-draped trail
+       overlay, glow beams, gate veils): in the G-buffer they read as
+       solid sheets and the AO composite paints everything under them
+       black */
+    if ((object.isSprite || object.userData?.gtaoSkip) && object.visible) {
       object.visible = false;
       cache.push(object);
     }
@@ -887,23 +891,6 @@ export function mount() {
   /* ----- the forest floor ----- */
 
   const HUB_R = 120;
-  {
-    const ground = new THREE.Mesh(
-      new THREE.CylinderGeometry(HUB_R, HUB_R + 7, 9, 56),
-      new THREE.MeshStandardMaterial({ map: meadowTexture(), roughness: 0.95 }),
-    );
-    ground.position.y = -4.5;
-    ground.receiveShadow = true;
-    scene.add(ground);
-    addBox(0, -4.5, 0, HUB_R, 4.5, HUB_R, { round: HUB_R });
-    /* dirt underside fades to fog — a floating island, platformer-style */
-    const under = new THREE.Mesh(
-      new THREE.CylinderGeometry(HUB_R + 7, HUB_R * 0.45, 36, 40),
-      new THREE.MeshStandardMaterial({ color: 0x7a5536, roughness: 1 }),
-    );
-    under.position.y = -27;
-    scene.add(under);
-  }
 
   /* the trail spiral the chests live on — keep trees off it */
   const trailAt = (i) => {
@@ -919,6 +906,97 @@ export function mount() {
     z: Math.sin(a) * HUB_R * 0.52,
     idx: i,
   }));
+
+  /* ----- terrain: rolling hills, flattened wherever the game lives -----
+     terrainH is THE ground truth — the mesh, findGround, every placement
+     and the gremlins' feet all read it. Gameplay spots (spawn, the trail,
+     chests, camps, the platform yard, the gates) sit in smoothing wells so
+     hills never fight the level design. */
+  const GATE_SPOTS = [0, 1, 2].map((k) => {
+    const a = -0.5 + k * 0.55;
+    return { x: Math.cos(a) * (HUB_R - 22), z: Math.sin(a) * (HUB_R - 22) };
+  });
+  const smoothstep = (e0, e1, x) => {
+    const t = THREE.MathUtils.clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  function terrainFlat(x, z) {
+    /* 0 = fully flattened, 1 = full hills */
+    let k = smoothstep(8, 24, Math.hypot(x, z)); // spawn glade + elder tree
+    k = Math.min(k, smoothstep(4, 11, Math.hypot(x - (-3), z - (-10)) - 9)); // platform yard
+    for (const c of chestSpots) k = Math.min(k, smoothstep(3.5, 10, Math.hypot(x - c.x, z - c.z)));
+    for (const c of CAMPS) k = Math.min(k, smoothstep(7, 15, Math.hypot(x - c.x, z - c.z)));
+    for (const g of GATE_SPOTS) k = Math.min(k, smoothstep(6, 13, Math.hypot(x - g.x, z - g.z)));
+    return k;
+  }
+  function terrainH(x, z) {
+    const rr = Math.hypot(x, z);
+    if (rr >= HUB_R) return 0;
+    /* gentle long-wave hills + a finer ripple, fading at the rim */
+    const h =
+      Math.sin(x * 0.045 + 1.7) * Math.cos(z * 0.05 + 0.4) * 2.1 +
+      Math.sin(x * 0.11 - z * 0.08 + 4.2) * 0.8 +
+      Math.cos(x * 0.021 + z * 0.034) * 1.4;
+    const rim = smoothstep(HUB_R - 4, HUB_R - 16, rr); // settle to 0 at the edge
+    return Math.max(-1.2, h) * terrainFlat(x, z) * rim;
+  }
+
+  {
+    /* the meadow disc: a rings × sectors grid displaced by terrainH (a
+       cylinder cap has no interior vertices to displace) */
+    const RINGS = 44;
+    const SECTORS = 96;
+    const pos = [];
+    const uv = [];
+    const idx = [];
+    for (let r = 0; r <= RINGS; r++) {
+      const rad = (r / RINGS) * HUB_R;
+      for (let s2 = 0; s2 <= SECTORS; s2++) {
+        const a = (s2 / SECTORS) * Math.PI * 2;
+        const x = Math.cos(a) * rad;
+        const z = Math.sin(a) * rad;
+        pos.push(x, terrainH(x, z), z);
+        uv.push((x / HUB_R) * 30 + 30, (z / HUB_R) * 30 + 30);
+      }
+    }
+    for (let r = 0; r < RINGS; r++)
+      for (let s2 = 0; s2 < SECTORS; s2++) {
+        const a = r * (SECTORS + 1) + s2;
+        const b = a + SECTORS + 1;
+        idx.push(a, a + 1, b, b, a + 1, b + 1);
+      }
+    const gGeo = new THREE.BufferGeometry();
+    gGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    gGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    gGeo.setIndex(idx);
+    gGeo.computeVertexNormals();
+    const groundTex = meadowTexture().clone();
+    groundTex.userData = {}; // the clone is ours to dispose, not shared
+    groundTex.repeat.set(1, 1);
+    groundTex.needsUpdate = true;
+    const ground = new THREE.Mesh(
+      gGeo,
+      new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.95 }),
+    );
+    ground.receiveShadow = true;
+    scene.add(ground);
+    /* the collision side of the disc comes from findGround reading
+       terrainH directly — the round box only owns the footprint */
+    addBox(0, -4.5, 0, HUB_R, 4.5, HUB_R, { round: HUB_R, terrain: true });
+    /* skirt + dirt underside fade to fog — a floating island */
+    const skirt = new THREE.Mesh(
+      new THREE.CylinderGeometry(HUB_R, HUB_R + 7, 9, 56, 1, true),
+      new THREE.MeshStandardMaterial({ map: meadowTexture(), roughness: 0.95 }),
+    );
+    skirt.position.y = -4.5;
+    scene.add(skirt);
+    const under = new THREE.Mesh(
+      new THREE.CylinderGeometry(HUB_R + 7, HUB_R * 0.45, 36, 40),
+      new THREE.MeshStandardMaterial({ color: 0x7a5536, roughness: 1 }),
+    );
+    under.position.y = -27;
+    scene.add(under);
+  }
 
   /* ----- the elder tree: the landmark the whole forest bends around ----- */
 
@@ -1037,19 +1115,21 @@ export function mount() {
       }
       return true;
     };
-    for (let i = 0; i < 600 && spots.length < 210; i++) {
+    for (let i = 0; i < 800 && spots.length < 270; i++) {
       const a = hash01(`ta${i}`) * Math.PI * 2;
       const r = HUB_R * (0.16 + Math.sqrt(hash01(`tr${i}`)) * 0.82);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       if (!clearOf(x, z)) continue;
+      const giant = hash01(`tg${i}`) < 0.08; // scattered ancients tower over the woods
+      const size = giant ? 2.7 + hash01(`ts${i}`) * 0.9 : 0.9 + hash01(`ts${i}`) * 1.5;
       let ok = true;
       for (const s of spots)
-        if (Math.hypot(x - s.x, z - s.z) < 3.4) {
+        if (Math.hypot(x - s.x, z - s.z) < (giant ? 6 : 3.4)) {
           ok = false;
           break;
         }
-      if (ok) spots.push({ x, z, s: 0.9 + hash01(`ts${i}`) * 1.7, seed: i });
+      if (ok) spots.push({ x, z, y: terrainH(x, z), s: size, seed: i });
     }
 
     plantForest = () => {
@@ -1107,7 +1187,7 @@ export function mount() {
       const s = 0.8 + hash01(`gs${i}`) * 1.2;
       q.setFromAxisAngle(UPY, hash01(`gq${i}`) * Math.PI);
       sc.set(s, s, s);
-      m4.compose(pos.set(Math.cos(a) * r, 0, Math.sin(a) * r), q, sc);
+      m4.compose(pos.set(Math.cos(a) * r, terrainH(Math.cos(a) * r, Math.sin(a) * r), Math.sin(a) * r), q, sc);
       tufts.setMatrixAt(i, m4);
       cv.setHSL(0.3 + hash01(`gc${i}`) * 0.1, 0.5, 0.38 + hash01(`gl${i}`) * 0.12);
       tufts.setColorAt(i, cv);
@@ -1128,7 +1208,7 @@ export function mount() {
       const a = hash01(`fa${i}`) * Math.PI * 2;
       const r = 5 + hash01(`fr${i}`) * (HUB_R - 9);
       m4.makeRotationY(hash01(`fq${i}`) * Math.PI);
-      m4.setPosition(Math.cos(a) * r, 0, Math.sin(a) * r);
+      m4.setPosition(Math.cos(a) * r, terrainH(Math.cos(a) * r, Math.sin(a) * r), Math.sin(a) * r);
       flowers.setMatrixAt(i, m4);
       cv.set([0xf7e07a, 0xf0f0f0, 0xf0a8c0, 0xb8a8f0][i % 4]);
       flowers.setColorAt(i, cv);
@@ -1156,7 +1236,7 @@ export function mount() {
       const s = 0.6 + hash01(`bs${i}`) * 0.9;
       q.setFromAxisAngle(UPY, hash01(`bq${i}`) * Math.PI);
       sc.set(s, s, s);
-      m4.compose(pos.set(Math.cos(a) * r, 0.45 * s, Math.sin(a) * r), q, sc);
+      m4.compose(pos.set(Math.cos(a) * r, 0.45 * s + terrainH(Math.cos(a) * r, Math.sin(a) * r), Math.sin(a) * r), q, sc);
       bushes.setMatrixAt(i, m4);
       cv.setHSL(0.29 + hash01(`bc${i}`) * 0.14, 0.5, 0.36 + hash01(`bl${i}`) * 0.12);
       bushes.setColorAt(i, cv);
@@ -1175,7 +1255,7 @@ export function mount() {
       const s = 0.5 + hash01(`rs${i}`) * 1.1;
       q.setFromAxisAngle(UPY, hash01(`rq${i}`) * Math.PI);
       sc.set(s, s * 0.62, s);
-      m4.compose(pos.set(Math.cos(a) * r, 0.28 * s, Math.sin(a) * r), q, sc);
+      m4.compose(pos.set(Math.cos(a) * r, 0.28 * s + terrainH(Math.cos(a) * r, Math.sin(a) * r), Math.sin(a) * r), q, sc);
       rocks.setMatrixAt(i, m4);
       cv.setHSL(0.55 + hash01(`rc${i}`) * 0.08, 0.08, 0.5 + hash01(`rl${i}`) * 0.16);
       rocks.setColorAt(i, cv);
@@ -1197,11 +1277,12 @@ export function mount() {
       const z = Math.sin(a) * r;
       q.setFromAxisAngle(UPY, hash01(`lq${i}`) * Math.PI);
       sc.set(1, 1, 1);
-      m4.compose(pos.set(x, 0.5, z), q, sc);
+      const ly = terrainH(x, z);
+      m4.compose(pos.set(x, 0.5 + ly, z), q, sc);
       logs.setMatrixAt(i, m4);
       cv.setHSL(0.07 + hash01(`lc${i}`) * 0.03, 0.35, 0.3 + hash01(`ll${i}`) * 0.08);
       logs.setColorAt(i, cv);
-      addBox(x, 0.5, z, 1.9, 0.5, 1.9);
+      addBox(x, 0.5 + ly, z, 1.9, 0.5, 1.9);
     }
     scene.add(logs);
 
@@ -1221,7 +1302,7 @@ export function mount() {
       const s = 0.9 + hash01(`sms${i}`) * 1.2;
       q.setFromAxisAngle(UPY, hash01(`smq${i}`) * Math.PI);
       sc.set(s, s, s);
-      m4.compose(pos.set(Math.cos(a) * r, 0, Math.sin(a) * r), q, sc);
+      m4.compose(pos.set(Math.cos(a) * r, terrainH(Math.cos(a) * r, Math.sin(a) * r), Math.sin(a) * r), q, sc);
       shroomlets.setMatrixAt(i, m4);
       cv.set([0xe25548, 0xf0b432, 0xb8a8f0][i % 3]);
       shroomlets.setColorAt(i, cv);
@@ -1284,7 +1365,7 @@ export function mount() {
       const a = hash01(`pa${i}`) * Math.PI * 2;
       const r = hash01(`pr${i}`) * (HUB_R - 6);
       arr[i * 3] = Math.cos(a) * r;
-      arr[i * 3 + 1] = 0.6 + hash01(`ph${i}`) * 7;
+      arr[i * 3 + 1] = terrainH(Math.cos(a) * r, Math.sin(a) * r) + 0.6 + hash01(`ph${i}`) * 7;
       arr[i * 3 + 2] = Math.sin(a) * r;
     }
     const g = new THREE.BufferGeometry();
@@ -1411,6 +1492,7 @@ export function mount() {
       const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.5, 2.6, 10, 1, true), glowM.clone());
       beam.position.y = 2.1;
       beam.visible = !!isRead;
+      beam.userData.gtaoSkip = true;
       beam.material.side = THREE.DoubleSide;
       beam.material.depthWrite = false;
       g.add(loot, beam);
@@ -1426,12 +1508,51 @@ export function mount() {
       sign.position.set(1.9, 1.9, 0);
       sign.castShadow = true;
       g.add(sPost, sign);
-      g.position.set(x, 0, z);
-      g.lookAt(0, 0, 0);
+      const cy = terrainH(x, z);
+      g.position.set(x, cy, z);
+      g.lookAt(0, cy, 0);
       scene.add(g);
-      addBox(x, 0.45, z, 0.85, 0.45, 0.7);
+      addBox(x, cy + 0.45, z, 0.85, 0.45, 0.7);
       chests.push({ group: g, lid, beam, loot, sign, post, read: !!isRead, x, z });
     });
+  }
+
+  /* ----- trail lanterns: glowing posts pace the spiral so the path
+     reads as a road through the woods, not a suggestion ----- */
+  {
+    const N = Math.max(10, posts.length * 2 + 4);
+    const postGeo = new THREE.CylinderGeometry(0.06, 0.09, 1.9, 6);
+    postGeo.translate(0, 0.95, 0);
+    bakeVertexAO(postGeo, 0, 1.9, 0.55);
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x5e4226, roughness: 0.9, vertexColors: true });
+    const bulbGeo = new THREE.SphereGeometry(0.17, 10, 8);
+    const bulbMat = new THREE.MeshStandardMaterial({
+      color: 0xffe9b0,
+      emissive: 0xffc46a,
+      emissiveIntensity: 1.6,
+      roughness: 0.4,
+    });
+    const lPosts = new THREE.InstancedMesh(postGeo, postMat, N);
+    const bulbs = new THREE.InstancedMesh(bulbGeo, bulbMat, N);
+    lPosts.castShadow = true;
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < N; i++) {
+      /* march the drawn trail: same param as the sandy path, offset to
+         alternating sides */
+      const ti = (i / (N - 1)) * posts.length;
+      const a = ti * 0.55 + 0.1;
+      const r = Math.min(13 + ti * 1.85, HUB_R - 14) - 3.4 + (i % 2 ? 2.9 : -2.9);
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const y = terrainH(x, z);
+      m4.makeRotationY(hash01(`lan${i}`) * Math.PI);
+      m4.setPosition(x, y, z);
+      lPosts.setMatrixAt(i, m4);
+      m4.setPosition(x, y + 1.98, z);
+      bulbs.setMatrixAt(i, m4);
+      treeCols.push({ x, z, r: 0.25 });
+    }
+    scene.add(lPosts, bulbs);
   }
 
   /* ----- coins ----- */
@@ -1464,7 +1585,9 @@ export function mount() {
       const cz = Math.sin(a) * r;
       for (let k = 0; k < 5; k++) {
         const ka = (k / 5) * Math.PI * 2;
-        addCoin(cx + Math.cos(ka) * 2.2, 1.1, cz + Math.sin(ka) * 2.2);
+        const kx = cx + Math.cos(ka) * 2.2;
+        const kz = cz + Math.sin(ka) * 2.2;
+        addCoin(kx, terrainH(kx, kz) + 1.1, kz);
       }
     }
     coins.addCoin = addCoin;
@@ -1495,9 +1618,9 @@ export function mount() {
         dot.position.set(Math.cos(da) * 0.7, 1.55, Math.sin(da) * 0.7);
         g.add(dot);
       }
-      g.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+      g.position.set(Math.cos(a) * r, terrainH(Math.cos(a) * r, Math.sin(a) * r), Math.sin(a) * r);
       scene.add(g);
-      shrooms.push({ g, cap, x: g.position.x, z: g.position.z, squish: 0 });
+      shrooms.push({ g, cap, x: g.position.x, y: g.position.y, z: g.position.z, squish: 0 });
     }
   }
 
@@ -1574,17 +1697,23 @@ export function mount() {
     const c = document.createElement('canvas');
     c.width = c.height = 1024;
     const ctx = c.getContext('2d');
+    /* blots accumulate on an offscreen union first: 270+ overlapping tree
+       shadows at per-blot alpha would saturate the whole forest floor to
+       black — the union composites ONCE at a fixed darkness instead */
+    const dark = document.createElement('canvas');
+    dark.width = dark.height = 1024;
+    const dctx = dark.getContext('2d');
     const blot = (x, z, r, a) => {
       const u = ((x / HUB_R) * 0.5 + 0.5) * 1024;
       const v = ((-z / HUB_R) * 0.5 + 0.5) * 1024; /* circle uv: +v is -z */
       const rr = (r / HUB_R) * 0.5 * 1024;
-      const g = ctx.createRadialGradient(u, v, 0, u, v, rr);
-      g.addColorStop(0, `rgba(10, 22, 10, ${a})`);
+      const g = dctx.createRadialGradient(u, v, 0, u, v, rr);
+      g.addColorStop(0, `rgba(10, 22, 10, ${Math.min(1, a * 3)})`);
       g.addColorStop(1, 'rgba(10, 22, 10, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(u, v, rr, 0, Math.PI * 2);
-      ctx.fill();
+      dctx.fillStyle = g;
+      dctx.beginPath();
+      dctx.arc(u, v, rr, 0, Math.PI * 2);
+      dctx.fill();
     };
     /* the trail: a sandy path tracing the chest spiral */
     ctx.strokeStyle = 'rgba(196, 168, 118, 0.5)';
@@ -1601,18 +1730,65 @@ export function mount() {
     }
     ctx.stroke();
     /* the forest is dense now — light blots, or the floor goes night-dark */
+    /* stone plazas anchor the gates and camps — the map gets addresses */
+    ctx.lineCap = 'butt';
+    const plaza = (x, z, r) => {
+      const u = ((x / HUB_R) * 0.5 + 0.5) * 1024;
+      const v = ((-z / HUB_R) * 0.5 + 0.5) * 1024;
+      const rr = (r / HUB_R) * 0.5 * 1024;
+      ctx.strokeStyle = 'rgba(130, 122, 148, 0.55)';
+      ctx.lineWidth = rr * 0.16;
+      ctx.beginPath();
+      ctx.arc(u, v, rr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(150, 142, 160, 0.16)';
+      ctx.beginPath();
+      ctx.arc(u, v, rr, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (const g of gates) plaza(g.x, g.z, 6);
+    for (const cmp of CAMPS) plaza(cmp.x, cmp.z, 6.5);
     for (const t of treeCols) blot(t.x, t.z, t.r * 2.2, 0.18);
     for (const p of gates) blot(p.x, p.z, 3.6, 0.4);
     for (const s of shrooms) blot(s.x, s.z, 2.6, 0.34);
     for (const cmp of CAMPS) blot(cmp.x, cmp.z, 5, 0.3);
+    ctx.globalAlpha = 0.3;
+    ctx.drawImage(dark, 0, 0);
+    ctx.globalAlpha = 1;
     const tex = new THREE.CanvasTexture(c);
+    /* drape the overlay on the hills: same rings × sectors grid as the
+       ground, lifted a hair, with planar uvs matching the canvas */
+    const RINGS = 44;
+    const SECTORS = 96;
+    const opos = [];
+    const ouv = [];
+    const oidx = [];
+    for (let r = 0; r <= RINGS; r++) {
+      const rad = (r / RINGS) * HUB_R;
+      for (let s2 = 0; s2 <= SECTORS; s2++) {
+        const a = (s2 / SECTORS) * Math.PI * 2;
+        const x = Math.cos(a) * rad;
+        const z = Math.sin(a) * rad;
+        opos.push(x, terrainH(x, z) + 0.07, z);
+        ouv.push((x / HUB_R) * 0.5 + 0.5, (-z / HUB_R) * 0.5 + 0.5);
+      }
+    }
+    for (let r = 0; r < RINGS; r++)
+      for (let s2 = 0; s2 < SECTORS; s2++) {
+        const a = r * (SECTORS + 1) + s2;
+        const b = a + SECTORS + 1;
+        oidx.push(a, a + 1, b, b, a + 1, b + 1);
+      }
+    const oGeo = new THREE.BufferGeometry();
+    oGeo.setAttribute('position', new THREE.Float32BufferAttribute(opos, 3));
+    oGeo.setAttribute('uv', new THREE.Float32BufferAttribute(ouv, 2));
+    oGeo.setIndex(oidx);
     const overlay = new THREE.Mesh(
-      new THREE.CircleGeometry(HUB_R, 48),
+      oGeo,
       new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
     );
-    overlay.rotation.x = -Math.PI / 2;
-    overlay.position.y = 0.04;
     overlay.renderOrder = 1;
+    overlay.userData.gtaoSkip = true;
     scene.add(overlay);
   }
 
@@ -1967,7 +2143,7 @@ export function mount() {
     for (const f of foes) {
       if (f.dead || f.boss) continue;
       f.state = 'idle';
-      f.group.position.set(f.home.x, 0, f.home.z);
+      f.group.position.set(f.home.x, terrainH(f.home.x, f.home.z), f.home.z);
       f.anim.play('idle');
     }
     syncVitals();
@@ -2076,6 +2252,7 @@ export function mount() {
         const a = hash01(`grm${cmp.idx}:${i}`) * Math.PI * 2;
         makeFoe('minion', assets.minion, {
           x: cmp.x + Math.cos(a) * 3.2,
+          y: terrainH(cmp.x + Math.cos(a) * 3.2, cmp.z + Math.sin(a) * 3.2),
           z: cmp.z + Math.sin(a) * 3.2,
           height: 1.0,
           hp: 3,
@@ -2138,7 +2315,7 @@ export function mount() {
         foe.hp = foe.maxHp;
         foe.state = 'idle';
         foe.group.visible = true;
-        foe.group.position.set(foe.home.x, 0, foe.home.z);
+        foe.group.position.set(foe.home.x, terrainH(foe.home.x, foe.home.z), foe.home.z);
         foe.anim.play('idle');
         puffAt(foe.home.x, 1, foe.home.z, 0xcdf2d2, 1, 0.6);
       }
@@ -2170,7 +2347,7 @@ export function mount() {
     if (!samezone) {
       if (foe.state !== 'idle') {
         foe.state = 'idle';
-        foe.group.position.set(foe.home.x, 0, foe.home.z);
+        foe.group.position.set(foe.home.x, terrainH(foe.home.x, foe.home.z), foe.home.z);
         foe.anim.play('idle');
       }
       foe.anim.mixer.update(dt);
@@ -2199,6 +2376,7 @@ export function mount() {
         const sp = foe.speed * (dist > 5 ? 1.25 : 1);
         foe.group.position.x += (dx / dist) * sp * dt;
         foe.group.position.z += (dz / dist) * sp * dt;
+        foe.group.position.y = terrainH(foe.group.position.x, foe.group.position.z);
         foe.group.rotation.y = Math.atan2(dx, dz);
         /* don't pile into packmates */
         for (const other of foes) {
@@ -2367,7 +2545,8 @@ export function mount() {
   let coinCount = store.coins();
   let camYaw = 0.6;
   let camPitch = 0.38;
-  let camDist = 13;
+  let camDist = 11;
+  let orbitIdleT = 99; // seconds since the player last orbited by hand
   const keys = { f: false, b: false, l: false, r: false, jump: false, dash: false, block: false };
   let nearChest = -1;
   let nearGate = -1;
@@ -2556,6 +2735,7 @@ export function mount() {
           if (stick.live && stickNub) stickNub.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
         } else if (e.pointerId === drag.id) {
           drag.moved += Math.abs(e.clientX - drag.lx) + Math.abs(e.clientY - drag.ly);
+          orbitIdleT = 0;
           camYaw -= (e.clientX - drag.lx) * 0.006;
           camPitch = THREE.MathUtils.clamp(camPitch + (e.clientY - drag.ly) * 0.004, 0.08, 1.1);
           drag.lx = e.clientX;
@@ -2586,7 +2766,7 @@ export function mount() {
       'wheel',
       (e) => {
         e.preventDefault();
-        camDist = THREE.MathUtils.clamp(camDist + e.deltaY * 0.01, 7, 22);
+        camDist = THREE.MathUtils.clamp(camDist + e.deltaY * 0.01, 3.2, 20);
       },
       { passive: false, signal },
     );
@@ -2715,11 +2895,16 @@ export function mount() {
     let best = -Infinity;
     let bestBox = null;
     for (const b of boxes) {
+      let top;
       if (b.round) {
         if ((px - b.x) * (px - b.x) + (pz - b.z) * (pz - b.z) > b.round * b.round) continue;
-      } else if (Math.abs(px - b.x) > b.hx + 0.3 || Math.abs(pz - b.z) > b.hz + 0.3) continue;
-      const top = b.y + b.hy;
-      if (top <= py + 0.25 && top > best) {
+        /* the hub disc is a heightfield; arena discs stay flat */
+        top = b.terrain ? terrainH(px, pz) : b.y + b.hy;
+      } else {
+        if (Math.abs(px - b.x) > b.hx + 0.3 || Math.abs(pz - b.z) > b.hz + 0.3) continue;
+        top = b.y + b.hy;
+      }
+      if (top <= py + 0.4 && top > best) {
         best = top;
         bestBox = b;
       }
@@ -2933,7 +3118,7 @@ export function mount() {
     const prevY = player.position.y;
     const g = findGround(prevY); // sweep from where the fall STARTED
     player.position.y += vel.y * dt;
-    if (vel.y <= 0 && g.top > -Infinity && prevY >= g.top - 0.05 && player.position.y <= g.top) {
+    if (vel.y <= 0 && g.top > -Infinity && prevY >= g.top - 0.4 && player.position.y <= g.top) {
       player.position.y = g.top;
       if (!onGround) {
         if (vel.y < -18) squash = 1;
@@ -3001,13 +3186,13 @@ export function mount() {
       sh.cap.scale.y = 1 - sh.squish * 0.45;
       const dx = player.position.x - sh.x;
       const dz = player.position.z - sh.z;
-      if (dx * dx + dz * dz < 1.6 && player.position.y < 2.2 && player.position.y > 0.6 && vel.y <= 0) {
+      if (dx * dx + dz * dz < 1.6 && player.position.y < sh.y + 2.2 && player.position.y > sh.y + 0.6 && vel.y <= 0) {
         vel.y = 24;
         onGround = false;
         usedDouble = false;
         sh.squish = 1;
         squash = -0.7;
-        puffAt(sh.x, 2.1, sh.z, 0xf2c4be, 1.2, 0.8);
+        puffAt(sh.x, sh.y + 2.1, sh.z, 0xf2c4be, 1.2, 0.8);
         audio.bounce();
       }
     }
@@ -3160,11 +3345,9 @@ export function mount() {
       pp.needsUpdate = true;
       for (const bf of butterflies) {
         const u = bf.userData;
-        bf.position.set(
-          u.cx + Math.sin(time * 0.5 + u.ph) * 4,
-          1.4 + Math.sin(time * 1.1 + u.ph) * 0.8,
-          u.cz + Math.cos(time * 0.37 + u.ph) * 4,
-        );
+        const bx = u.cx + Math.sin(time * 0.5 + u.ph) * 4;
+        const bz = u.cz + Math.cos(time * 0.37 + u.ph) * 4;
+        bf.position.set(bx, terrainH(bx, bz) + 1.4 + Math.sin(time * 1.1 + u.ph) * 0.8, bz);
         bf.rotation.y = time * 0.5 + u.ph + Math.PI / 2;
         const flap = Math.sin(time * 14 + u.ph) * 0.9;
         u.l.rotation.y = Math.PI - flap;
@@ -3202,8 +3385,17 @@ export function mount() {
     sun.position.set(sx + SUN_OFF.x, SUN_OFF.y, sz + SUN_OFF.z);
     sun.target.position.set(sx, 0, sz);
 
-    /* --- camera: orbit follow + impact shake --- */
+    /* --- camera: Genshin-style — drag orbits, and while you run the
+       camera gently settles in behind you; the wheel zooms from
+       over-the-shoulder to wide --- */
     shake = Math.max(0, shake - dt * 1.6);
+    orbitIdleT += dt;
+    if (orbitIdleT > 1.6 && spd > 2.5 && !reduced) {
+      let dA = facing + Math.PI - camYaw;
+      while (dA > Math.PI) dA -= Math.PI * 2;
+      while (dA < -Math.PI) dA += Math.PI * 2;
+      camYaw += dA * (1 - Math.exp(-dt * 1.1 * Math.min(1, spd / 9)));
+    }
     const cy = Math.sin(camPitch) * camDist;
     const ch = Math.cos(camPitch) * camDist;
     tmpV2.set(
@@ -3211,13 +3403,16 @@ export function mount() {
       player.position.y + cy + 1.2,
       player.position.z + Math.cos(camYaw) * ch,
     );
+    /* hills must not swallow the camera */
+    tmpV2.y = Math.max(tmpV2.y, terrainH(tmpV2.x, tmpV2.z) + 0.6);
     camera.position.lerp(tmpV2, reduced ? 1 : 1 - Math.exp(-dt * 6));
     if (shake > 0.01 && !reduced) {
       camera.position.x += (Math.random() - 0.5) * shake * 0.5;
       camera.position.y += (Math.random() - 0.5) * shake * 0.5;
     }
     camLook.copy(player.position);
-    camLook.y += 1.4;
+    /* close zoom reads over the shoulder, not at the ankles */
+    camLook.y += THREE.MathUtils.lerp(1.55, 1.3, Math.min(1, camDist / 14));
     camera.lookAt(camLook);
 
     /* --- HUD tick --- */
