@@ -96,6 +96,22 @@ const mulberry = (seed) => () => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
+/* bake a cheap AO gradient into vertex colors: undersides darken, tops
+   stay lit — multiplies with instance colors for free */
+function bakeVertexAO(geo, minY, maxY, floor = 0.55) {
+  const pos = geo.attributes.position;
+  const nor = geo.attributes.normal;
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const h = THREE.MathUtils.clamp((pos.getY(i) - minY) / (maxY - minY), 0, 1);
+    const up = nor.getY(i) * 0.5 + 0.5;
+    const ao = floor + (1 - floor) * Math.min(1, h * 0.7 + up * 0.45);
+    col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = ao;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
 const slugOf = (href) => href?.match(/\/posts\/([^/]+)\/?/)?.[1] ?? null;
 
 function readPosts() {
@@ -621,7 +637,7 @@ export function mount() {
   const found = store.found();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.3 : 1.5));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.3 : 1.4));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
   /* PCF honors shadow.radius — the soft penumbra without VSM's blur cost */
@@ -680,6 +696,9 @@ export function mount() {
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
+  /* no GTAO here: AO occludes ambient light, and this scene is lamp-lit
+     night — baked vertex AO + contact shadows carry the grounding at zero
+     per-frame cost (GTAO measured -20fps for an invisible change) */
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
@@ -786,7 +805,7 @@ export function mount() {
   const moon = new THREE.DirectionalLight(0xa8c0ee, 1.9);
   moon.castShadow = true;
   /* 2048 + VSM blur beats 4096 + hard PCF — the blur pass is per-frame */
-  moon.shadow.mapSize.setScalar(coarse ? 1024 : 2048);
+  moon.shadow.mapSize.setScalar(2048);
   moon.shadow.radius = 14;
   moon.shadow.camera.left = -70;
   moon.shadow.camera.right = 70;
@@ -1012,18 +1031,24 @@ export function mount() {
       g.translate(x, y, z);
       return g;
     };
-    const canopyGeo = mergeGeometries([
-      blob(0, 0, 0, 1.9),
-      blob(1.15, 0.65, 0.3, 1.25),
-      blob(-1.05, 0.5, -0.45, 1.3),
-      blob(0.2, 1.45, -0.1, 1.15),
-      blob(-0.25, 0.35, 1.1, 1.05),
-    ]);
+    const canopyGeo = bakeVertexAO(
+      mergeGeometries([
+        blob(0, 0, 0, 1.9),
+        blob(1.15, 0.65, 0.3, 1.25),
+        blob(-1.05, 0.5, -0.45, 1.3),
+        blob(0.2, 1.45, -0.1, 1.15),
+        blob(-0.25, 0.35, 1.1, 1.05),
+      ]),
+      -1.9,
+      2.6,
+      0.55,
+    );
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x241a18, roughness: 0.9 });
     const canopyMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.85,
       flatShading: true,
+      vertexColors: true,
     });
     const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, N);
     const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, N);
@@ -1071,11 +1096,12 @@ export function mount() {
       g.translate(Math.cos(a) * 0.17, 0, Math.sin(a) * 0.17);
       blades.push(g);
     }
-    const tuftGeo = mergeGeometries(blades);
+    const tuftGeo = bakeVertexAO(mergeGeometries(blades), 0, 1.1, 0.5);
     const tuftMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.9,
       flatShading: true,
+      vertexColors: true,
     });
     const N = coarse ? 350 : 700;
     const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, N);
@@ -1721,6 +1747,40 @@ export function mount() {
       });
     }
     scene.add(coneInst);
+  }
+
+  /* baked contact shadows: dark breath under trees, poles, props — the
+     grounding that real-time shadows alone don't deliver at night */
+  {
+    const R = 280;
+    const c = document.createElement('canvas');
+    c.width = c.height = 1024;
+    const ctx = c.getContext('2d');
+    const blot = (x, z, r, a) => {
+      if (x * x + z * z > R * R) return;
+      const u = ((x / R) * 0.5 + 0.5) * 1024;
+      const v = ((-z / R) * 0.5 + 0.5) * 1024; /* circle uv: +v is -z */
+      const rr = Math.max(3, (r / R) * 0.5 * 1024);
+      const g = ctx.createRadialGradient(u, v, 0, u, v, rr);
+      g.addColorStop(0, `rgba(2, 4, 14, ${a})`);
+      g.addColorStop(1, 'rgba(2, 4, 14, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(u, v, rr, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (const cb of colliders) blot(cb.x, cb.z, cb.r * 2.5, 0.42);
+    for (const p of props) blot(p.g.position.x, p.g.position.z, p.r * 2.2, 0.36);
+    for (const cs of coneSpots) blot(cs.x, cs.z, 0.9, 0.3);
+    const tex = new THREE.CanvasTexture(c);
+    const overlay = new THREE.Mesh(
+      new THREE.CircleGeometry(R, 48),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+    );
+    overlay.rotation.x = -Math.PI / 2;
+    overlay.position.y = 0.05;
+    overlay.renderOrder = 1;
+    scene.add(overlay);
   }
 
   /* ----- input ----- */

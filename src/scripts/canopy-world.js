@@ -24,6 +24,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -120,6 +121,22 @@ const mulberry = (seed) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
+
+/* bake a cheap AO gradient into vertex colors: undersides and crevices
+   darken, tops stay lit — multiplies with instance colors for free */
+function bakeVertexAO(geo, minY, maxY, floor = 0.55) {
+  const pos = geo.attributes.position;
+  const nor = geo.attributes.normal;
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const h = THREE.MathUtils.clamp((pos.getY(i) - minY) / (maxY - minY), 0, 1);
+    const up = nor.getY(i) * 0.5 + 0.5;
+    const ao = floor + (1 - floor) * Math.min(1, h * 0.7 + up * 0.45);
+    col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = ao;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
 
 const slugOf = (href) => href?.match(/\/(?:posts|drafts)\/([^/]+)\/?/)?.[1] ?? null;
 
@@ -439,7 +456,7 @@ export function mount() {
   };
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.3 : 1.5));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.3 : 1.4));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -487,7 +504,28 @@ export function mount() {
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
+  /* GTAO: real screen-space occlusion, mobile included — the denoiser
+     just runs lighter there */
+  const gtaoPass = new GTAOPass(scene, camera, innerWidth, innerHeight);
+  gtaoPass.output = GTAOPass.OUTPUT.Default;
+  gtaoPass.updateGtaoMaterial({
+    radius: 0.9,
+    distanceExponent: 1,
+    thickness: 1,
+    distanceFallOff: 1,
+    scale: 1.4,
+      samples: coarse ? 6 : 8,
+  });
+  gtaoPass.updatePdMaterial({
+    lumaPhi: 10,
+    depthPhi: 2,
+    normalPhi: 3,
+    radius: 4,
+    rings: 2,
+    samples: coarse ? 8 : 16,
+  });
   composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(gtaoPass);
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
   composer.addPass(gradePass);
@@ -586,15 +624,20 @@ export function mount() {
       g.translate(x, y, z);
       return g;
     };
-    const canopyGeo = mergeGeometries([
-      blob(0, 0, 0, 2.0),
-      blob(1.2, 0.7, 0.3, 1.3),
-      blob(-1.1, 0.5, -0.4, 1.35),
-      blob(0.2, 1.5, -0.1, 1.2),
-    ]);
+    const canopyGeo = bakeVertexAO(
+      mergeGeometries([
+        blob(0, 0, 0, 2.0),
+        blob(1.2, 0.7, 0.3, 1.3),
+        blob(-1.1, 0.5, -0.4, 1.35),
+        blob(0.2, 1.5, -0.1, 1.2),
+      ]),
+      -2,
+      2.7,
+      0.6,
+    );
     const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 3, 7);
     const trunkMat = new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.9 });
-    const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, flatShading: true });
+    const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, flatShading: true, vertexColors: true });
     const N = 70;
     const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, N);
     const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, N);
@@ -636,8 +679,8 @@ export function mount() {
       g.translate(Math.cos(a) * 0.12, 0, Math.sin(a) * 0.12);
       blades.push(g);
     }
-    const tuftGeo = mergeGeometries(blades);
-    const tuftMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
+    const tuftGeo = bakeVertexAO(mergeGeometries(blades), 0, 0.8, 0.5);
+    const tuftMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true, vertexColors: true });
     const GN = coarse ? 250 : 500;
     const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, GN);
     for (let i = 0; i < GN; i++) {
@@ -701,7 +744,8 @@ export function mount() {
       (() => { const g = new THREE.IcosahedronGeometry(1.0, 1); g.translate(0.9, 0.6, 0.2); return g; })(),
       (() => { const g = new THREE.IcosahedronGeometry(0.95, 1); g.translate(-0.85, 0.5, -0.3); return g; })(),
     ]);
-    const bloomMat = new THREE.MeshStandardMaterial({ color: 0xf2b8cc, roughness: 0.8, flatShading: true });
+    bakeVertexAO(bloomCanopy, -1.6, 2.4, 0.62);
+    const bloomMat = new THREE.MeshStandardMaterial({ color: 0xf2b8cc, roughness: 0.8, flatShading: true, vertexColors: true });
     const sproutMat = new THREE.MeshStandardMaterial({ color: 0x9ccf8a, roughness: 0.85, flatShading: true });
     const trunkG = new THREE.CylinderGeometry(0.18, 0.3, 2.2, 6);
     const trunkM = new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.9 });
@@ -807,12 +851,12 @@ export function mount() {
 
   /* ----- platform playground in the hub center ----- */
 
-  const platMat = new THREE.MeshStandardMaterial({ color: 0x6abf6e, roughness: 0.85 });
-  const platSideMat = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.95 });
+  const platMat = new THREE.MeshStandardMaterial({ color: 0x6abf6e, roughness: 0.85, vertexColors: true });
+  const platSideMat = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.95, vertexColors: true });
   function addPlatform(x, y, z, hx, hz, mover) {
     const g = new THREE.Group();
-    const top = new THREE.Mesh(new RoundedBoxGeometry(hx * 2, 0.6, hz * 2, 2, 0.18), platMat);
-    const base = new THREE.Mesh(new RoundedBoxGeometry(hx * 2 - 0.3, 0.9, hz * 2 - 0.3, 2, 0.18), platSideMat);
+    const top = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(hx * 2, 0.6, hz * 2, 2, 0.18), -0.3, 0.3, 0.62), platMat);
+    const base = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(hx * 2 - 0.3, 0.9, hz * 2 - 0.3, 2, 0.18), -0.45, 0.45, 0.5), platSideMat);
     base.position.y = -0.7;
     top.castShadow = top.receiveShadow = true;
     g.add(top, base);
@@ -856,14 +900,46 @@ export function mount() {
     }
   }
 
+  /* baked contact shadows: a dark breath under everything standing on the
+     meadow — grounding the shadow map alone can't deliver at this size */
+  {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1024;
+    const ctx = c.getContext('2d');
+    const blot = (x, z, r, a) => {
+      const u = ((x / HUB_R) * 0.5 + 0.5) * 1024;
+      const v = ((-z / HUB_R) * 0.5 + 0.5) * 1024; /* circle uv: +v is -z */
+      const rr = (r / HUB_R) * 0.5 * 1024;
+      const g = ctx.createRadialGradient(u, v, 0, u, v, rr);
+      g.addColorStop(0, `rgba(10, 22, 10, ${a})`);
+      g.addColorStop(1, 'rgba(10, 22, 10, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(u, v, rr, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (const t of treeCols) blot(t.x, t.z, t.r * 2.6, 0.34);
+    for (const p of pipes) blot(p.x, p.z, 3.6, 0.4);
+    for (const s of shrooms) blot(s.x, s.z, 2.6, 0.34);
+    const tex = new THREE.CanvasTexture(c);
+    const overlay = new THREE.Mesh(
+      new THREE.CircleGeometry(HUB_R, 48),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+    );
+    overlay.rotation.x = -Math.PI / 2;
+    overlay.position.y = 0.04;
+    overlay.renderOrder = 1;
+    scene.add(overlay);
+  }
+
   /* a course: floating islands ascending to a star, offset far from the hub */
   function buildCourse(k) {
     const rnd = mulberry(hash32(`course-${k}`));
     const ox = 700 + k * 700;
     const island = (x, y, z, hx, hz) => {
       const g = new THREE.Group();
-      const top = new THREE.Mesh(new RoundedBoxGeometry(hx * 2, 0.7, hz * 2, 2, 0.2), platMat);
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(Math.min(hx, hz) * 0.8, 0.3, 1.6, 8), platSideMat);
+      const top = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(hx * 2, 0.7, hz * 2, 2, 0.2), -0.35, 0.35, 0.62), platMat);
+      const base = new THREE.Mesh(bakeVertexAO(new THREE.CylinderGeometry(Math.min(hx, hz) * 0.8, 0.3, 1.6, 8), -0.8, 0.8, 0.45), platSideMat);
       base.position.y = -1.1;
       top.castShadow = top.receiveShadow = true;
       g.add(top, base);
@@ -1642,6 +1718,7 @@ export function mount() {
       }
     });
     bloomPass.dispose();
+    gtaoPass.dispose();
     gradePass.dispose();
     composer.dispose();
     renderer.dispose();
