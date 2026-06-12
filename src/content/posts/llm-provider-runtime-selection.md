@@ -1,9 +1,8 @@
 ---
 title: 'Your LLM provider is state, not architecture'
 description: 'Provider choice is request-scoped state — one LanguageModel that re-resolves model, credential, and client per call.'
-pubDate: 2026-06-11
+pubDate: 2026-05-29
 tags: [effect, ai, agents]
-draft: true
 ---
 
 A terminal agent has a feature so small that nobody puts it on a feature list: you type `:model`, pick a different model — maybe a different *company's* model — and the next message just goes there. Mid-session, mid-conversation, no restart. You type `:login anthropic`, finish the OAuth dance in a browser tab, and the very next turn runs on your Claude subscription. Nothing rebuilt, nothing reloaded, no "please restart to apply changes."

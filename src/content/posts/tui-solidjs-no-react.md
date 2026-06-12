@@ -1,9 +1,8 @@
 ---
 title: 'Updating one cell should cost one cell: the architecture of an agent TUI'
 description: "How efferent's terminal UI works: OpenTUI over FFI, Solid signals, one Effect queue, and a pure presentation core."
-pubDate: 2026-06-11
+pubDate: 2026-06-12
 tags: [tui, agents, typescript]
-draft: true
 ---
 
 A coding agent's UI has a strange job description. For long stretches nothing happens — a fiber is parked on a provider request, or the human is reading. Then a turn resolves and the terminal has to absorb a hailstorm: assistant prose, a dozen tool pills flipping from running to done, three sub-agent rows updating in place, a context gauge, a spinner and an elapsed clock ticking eight times a second. Each of those updates touches a few terminal cells. The natural cost of "this number changed" should be roughly the cost of changing the number.

@@ -1,9 +1,8 @@
 ---
 title: 'Evals are unit tests for behavior, and they belong in the repo'
 description: "Cases, tasks, and scorers as Effect programs — and why an agent's evals belong in the same repo as its prompts."
-pubDate: 2026-06-11
+pubDate: 2026-06-05
 tags: [evals, effect, ai]
-draft: true
 ---
 
 Agent codebases have a geography problem. Everything that *decides* how the agent behaves lives in the repo: the system prompt, the tool descriptions the model reads before picking one, the loop policy that says when to stop and what's allowed. Everything that *measures* how the agent behaves usually lives somewhere else — an eval dashboard, a notebook somebody ran in March, a separate "evals" repo with its own pasted copy of the prompt. Then someone softens one sentence in a tool description, it looks fine in one manual session, it ships — and the regression is found by a user, three days later, doing the one thing nobody tried.

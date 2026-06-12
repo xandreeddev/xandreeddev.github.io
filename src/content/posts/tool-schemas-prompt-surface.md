@@ -1,7 +1,7 @@
 ---
 title: 'The model never reads your handler'
 description: 'A tool schema is prompt surface — the descriptions and annotations are the only docs a model reads before it acts.'
-pubDate: 2026-06-11
+pubDate: 2026-06-13
 tags: [ai, agents]
 ---
 
