@@ -24,6 +24,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Water } from 'three/addons/objects/Water.js';
 
@@ -315,6 +316,39 @@ function waterNormalsTexture() {
   });
 }
 
+/* tileable asphalt roughness: smooth noise so the wet-road sheen breaks up
+   into patches instead of one uniform plastic gloss */
+function asphaltRoughnessTexture() {
+  return shared('asphalt-rough', () => {
+    const s = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(s, s);
+    let h = new Float32Array(s * s);
+    for (let i = 0; i < s * s; i++) h[i] = Math.random();
+    const out = new Float32Array(s * s);
+    for (let y = 0; y < s; y++)
+      for (let x = 0; x < s; x++) {
+        let t = 0;
+        for (let dy = -2; dy <= 2; dy++)
+          for (let dx = -2; dx <= 2; dx++) t += h[((y + dy + s) % s) * s + ((x + dx + s) % s)];
+        out[y * s + x] = t / 25;
+      }
+    h = out;
+    for (let i = 0; i < s * s; i++) {
+      const v = Math.round((0.4 + h[i] * 0.5) * 255 + (Math.random() - 0.5) * 26);
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(14, 14);
+    return tex;
+  });
+}
+
 const rrect = (ctx, x, y, w, h, r) => {
   if (ctx.roundRect) {
     ctx.beginPath();
@@ -405,7 +439,7 @@ function billboardTexture(post, i, found) {
   }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   return tex;
 }
 
@@ -496,7 +530,7 @@ export function mount() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.06;
+  renderer.toneMappingExposure = 1.12;
   renderer.domElement.className = 'sodium-canvas';
   renderer.domElement.setAttribute('aria-hidden', 'true');
   document.body.prepend(renderer.domElement);
@@ -507,11 +541,63 @@ export function mount() {
 
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 1600);
 
-  const composer = new EffectComposer(renderer);
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.55, 0.82);
+  /* the composer bypasses the canvas's MSAA — render into a multisampled
+     HDR target or every edge in the night is a staircase */
+  const pr = renderer.getPixelRatio();
+  const composer = new EffectComposer(
+    renderer,
+    new THREE.WebGLRenderTarget(innerWidth * pr, innerHeight * pr, {
+      type: THREE.HalfFloatType,
+      samples: coarse ? 2 : 4,
+    }),
+  );
+  composer.setPixelRatio(pr);
+  composer.setSize(innerWidth, innerHeight);
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.68, 0.6, 0.78);
+  /* night grade: vignette, radial chromatic aberration, film grain.
+     Runs AFTER OutputPass, display-referred — additive grain in linear
+     HDR lifts a night scene's blacks into gray haze */
+  const gradePass = new ShaderPass({
+    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform float uTime;
+      varying vec2 vUv;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      void main() {
+        vec2 c = vUv - 0.5;
+        float r2 = dot(c, c);
+        vec2 ca = c * r2 * 0.028;
+        vec3 col;
+        col.r = texture2D(tDiffuse, vUv - ca).r;
+        col.g = texture2D(tDiffuse, vUv).g;
+        col.b = texture2D(tDiffuse, vUv + ca).b;
+        col *= 1.0 - smoothstep(0.12, 0.85, r2) * 0.36;
+        col += (hash(vUv * 1024.0 + fract(uTime) * 7.13) - 0.5) * 0.03;
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
+  composer.addPass(gradePass);
+
+  addEventListener(
+    'resize',
+    () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      composer.setSize(innerWidth, innerHeight);
+    },
+    { signal },
+  );
 
   let hud = null;
   let raf = 0;
@@ -645,7 +731,12 @@ export function mount() {
   {
     const road = new THREE.Mesh(
       new THREE.RingGeometry(ROAD_R - ROAD_W, ROAD_R + ROAD_W, 160),
-      new THREE.MeshStandardMaterial({ color: 0x1a2030, roughness: 0.35, metalness: 0.1 }),
+      new THREE.MeshStandardMaterial({
+        color: 0x1a2030,
+        roughness: 0.62,
+        roughnessMap: asphaltRoughnessTexture(),
+        metalness: 0.12,
+      }),
     );
     road.rotation.x = -Math.PI / 2;
     road.position.y = 0.02;
@@ -688,8 +779,8 @@ export function mount() {
   /* ----- the lake: real planar reflections + animated normals ----- */
 
   const water = new Water(new THREE.CircleGeometry(LAKE_R, 64), {
-    textureWidth: coarse ? 256 : 512,
-    textureHeight: coarse ? 256 : 512,
+    textureWidth: coarse ? 256 : 1024,
+    textureHeight: coarse ? 256 : 1024,
     waterNormals: waterNormalsTexture(),
     sunDirection: MOON_OFF.clone().normalize(),
     sunColor: 0x8fb4ff,
@@ -783,7 +874,21 @@ export function mount() {
       head.position.set(0, 7.3, -side * 2.2);
       const cone = new THREE.Mesh(new THREE.ConeGeometry(3.6, 7.2, 16, 1, true), coneMat);
       cone.position.set(0, 3.7, -side * 2.2);
-      g.add(pole, arm, head, cone);
+      /* the pool of sodium on the tarmac — the cone alone reads as haze,
+         the road needs the light to land somewhere */
+      const pool = new THREE.Mesh(
+        new THREE.PlaneGeometry(9.5, 9.5),
+        new THREE.MeshBasicMaterial({
+          map: glowTexture('#ffb45e'),
+          transparent: true,
+          opacity: 0.22,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(0, 0.06, -side * 2.2);
+      g.add(pole, arm, head, cone, pool);
       g.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
       g.lookAt(0, 0, 0);
       scene.add(g);
@@ -941,9 +1046,21 @@ export function mount() {
   function makeCar() {
     const car = new THREE.Group();
     const body = new THREE.Group();
-    const paint = new THREE.MeshStandardMaterial({ color: 0x222b3a, metalness: 0.8, roughness: 0.3 });
+    const paint = new THREE.MeshPhysicalMaterial({
+      color: 0x243250,
+      metalness: 0.85,
+      roughness: 0.34,
+      clearcoat: 1,
+      clearcoatRoughness: 0.08,
+      envMapIntensity: 1.3,
+    });
     const trim = new THREE.MeshStandardMaterial({ color: 0x0b0e14, metalness: 0.4, roughness: 0.6 });
-    const glass = new THREE.MeshStandardMaterial({ color: 0x0d1722, metalness: 0.95, roughness: 0.12 });
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x0d1722,
+      metalness: 0.95,
+      roughness: 0.08,
+      envMapIntensity: 1.8,
+    });
 
     const chassis = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.52, 4.3), paint);
     chassis.position.y = 0.56;
@@ -1010,7 +1127,9 @@ export function mount() {
     glow.position.y = 0.06;
     car.add(glow);
 
-    /* headlight spots */
+    /* headlight spots — no volumetric cones: the chase camera looks
+       straight down the beam axis, so an additive cone reads as a
+       permanent blob in the middle of the screen */
     const spots = [];
     for (const sx of [-0.6, 0.6]) {
       const s = new THREE.SpotLight(0xbfd8ff, 130, 100, 0.5, 0.55, 1.5);
@@ -1352,6 +1471,7 @@ export function mount() {
 
     /* --- env animation --- */
     skyMat.uniforms.uTime.value = reduced ? 12 : time;
+    gradePass.uniforms.uTime.value = reduced ? 1 : time;
     water.material.uniforms.time.value += dt * (reduced ? 0.12 : 0.65);
     for (const t of rotors) {
       if (!reduced) t.rotor.rotation.z += dt * t.speed;
@@ -1511,6 +1631,7 @@ export function mount() {
       }
     });
     bloomPass.dispose();
+    gradePass.dispose();
     composer.dispose();
     renderer.dispose();
     renderer.forceContextLoss?.();

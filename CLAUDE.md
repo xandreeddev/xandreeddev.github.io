@@ -134,6 +134,13 @@ Rules that keep it healthy:
   shadow shimmer. Mute persists in `sodium-mute`.
 - Scratch-vector discipline: the chase camera has a dedicated `camLook` — aliasing
   `tmpV`/`fwd` here caused a camera bug once already.
+- Rendering (applies to both worlds): the EffectComposer bypasses the canvas's
+  MSAA, so each composer renders into a multisampled HalfFloat target — drop the
+  `samples` option and every edge becomes a staircase. Sodium's grade pass
+  (vignette / grain / chromatic aberration) must stay AFTER `OutputPass`,
+  display-referred: additive grain in linear HDR lifts night blacks into gray
+  haze. No volumetric headlight cones — the chase camera looks straight down the
+  beam axis, so an additive cone reads as a permanent blob mid-screen.
 
 ## Deploy / domain
 

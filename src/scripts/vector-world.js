@@ -774,7 +774,18 @@ export function mount() {
 
   const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1400);
 
-  const composer = new EffectComposer(renderer);
+  /* the composer bypasses the canvas's MSAA — render into a multisampled
+     HDR target or every wireframe edge is a staircase */
+  const pr = renderer.getPixelRatio();
+  const composer = new EffectComposer(
+    renderer,
+    new THREE.WebGLRenderTarget(innerWidth * pr, innerHeight * pr, {
+      type: THREE.HalfFloatType,
+      samples: coarse ? 2 : 4,
+    }),
+  );
+  composer.setPixelRatio(pr);
+  composer.setSize(innerWidth, innerHeight);
   const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.05, 0.6, 0.18);
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(bloomPass);
