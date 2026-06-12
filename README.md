@@ -5,9 +5,10 @@ evals. Built alongside [efferent](https://github.com/xandreeddev/agent), an
 open-source coding agent on Effect.ts, which the posts draw their examples from.
 
 **No React. No framework JavaScript.** Hand-written CSS, two small inline scripts
-(style switcher, code-copy buttons), and one opt-in exception: the `vector` and
-`sodium` styles each lazy-load a vanilla Three.js chunk and turn the site into
-a game — a flyable star system and a night drive.
+(style switcher, code-copy buttons), and one opt-in exception: the `vector`,
+`sodium` and `canopy` styles each lazy-load a vanilla Three.js chunk and turn
+the site into a game — a flyable star system, a night drive, and a 3D
+platformer.
 
 ## Quickstart
 
@@ -46,7 +47,7 @@ draft: true # visible in dev; excluded from build, RSS, sitemap
 Code fences take `title="path/to/file.ts"` plus `[!code highlight]` and
 `[!code ++]` / `[!code --]` line notations.
 
-## Seven design systems, one switcher
+## Eight design systems, one switcher
 
 The header switcher swaps the entire visual identity live — typography, layout,
 decoration, motion — not just a palette. Choice persists in `localStorage`;
@@ -61,11 +62,29 @@ first visit follows `prefers-color-scheme` (dark → phosphor, light → gazette
 | system   | retro desk         | Silkscreen · Chivo · Fragment |
 | vector   | context overworld  | VT323 · JetBrains Mono        |
 | sodium   | night drive        | Michroma · Outfit · Martian   |
+| canopy   | overworld          | Fredoka · Nunito · Space Mono |
 
 Each style is one file in `src/styles/` overriding the token contract declared
 in `global.css` (colors, fonts, radii, border weights) plus its own signature
 moves under `[data-style="…"]`. The base renders complete with JS disabled, and
 the browser only downloads the fonts the active style uses.
+
+## canopy: the overworld
+
+Pick **canopy** and the homepage becomes a sunny 3D platformer: a floating
+forest meadow where every article is a tree along a winding trail — a pale
+sapling until you read it, then it blooms. Reading is the progression
+system: articles unlock real movement power-ups (double jump at 1, dash at
+3, glide at 6, bloom boost at 10).
+
+- Platformer-honest movement: coyote time, jump buffering, variable jump
+  height, squash and stretch. `WASD` runs, `space` jumps (hold to glide),
+  `shift` dashes, drag orbits the camera. Touch: stick + A/B buttons.
+- Coins to collect, mushrooms that launch you, a floating platform
+  playground, and three warp pipes leading to seeded island-hopping courses
+  with a star at the summit.
+- Soft sun shadows, drifting clouds, synth birdsong — procedural, no assets,
+  and only canopy pays for the chunk.
 
 ## vector: the blog as a game
 

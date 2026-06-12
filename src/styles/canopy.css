@@ -1,0 +1,549 @@
+/* ---------------------------------------------------------------------------
+   CANOPY — the overworld.
+   A sunny platformer of a page: sky blues, leaf greens, coin gold, chunky
+   rounded type (Fredoka over Nunito), thick friendly borders, pill buttons.
+   On the homepage the canopy-world chunk turns the site into a 3D platformer
+   — but this sheet alone is a complete bright theme with zero JS.
+--------------------------------------------------------------------------- */
+
+[data-style='canopy'] {
+  color-scheme: light;
+
+  --font-body: 'Nunito Variable', 'Trebuchet MS', Verdana, sans-serif;
+  --font-display: 'Fredoka Variable', 'Trebuchet MS', sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --bg: oklch(96% 0.025 130);
+  --surface: oklch(98.5% 0.012 120);
+  --surface-2: oklch(93% 0.03 130);
+  --border: oklch(58% 0.09 140);
+  --text: oklch(28% 0.05 145);
+  --text-2: oklch(42% 0.06 145);
+  --text-3: oklch(52% 0.055 145);
+  --accent: oklch(58% 0.16 145);
+  --accent-dim: oklch(58% 0.16 145 / 0.12);
+  --ok-dim: oklch(62% 0.14 150 / 0.14);
+  --bad-dim: oklch(58% 0.18 28 / 0.12);
+
+  --radius-s: 10px;
+  --radius-m: 16px;
+  --border-w: 2px;
+  --display-weight: 600;
+}
+
+[data-style='canopy'] .brand-mark::before,
+[data-style='canopy'] .sw-glyph::before {
+  content: '❀';
+}
+
+[data-style='canopy'] body {
+  background:
+    linear-gradient(180deg, oklch(92% 0.045 230) 0%, oklch(96% 0.025 130) 26rem),
+    var(--bg);
+  line-height: 1.65;
+}
+
+/* ----- header: a floating wooden sign ----- */
+
+[data-style='canopy'] .site-header {
+  border-bottom: 0;
+}
+
+[data-style='canopy'] .site-header .container {
+  margin-top: 0.9rem;
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 0 oklch(58% 0.09 140 / 0.35);
+  padding-block: 0.55rem;
+}
+
+[data-style='canopy'] .brand {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.2rem;
+  color: var(--accent);
+}
+
+[data-style='canopy'] .brand .brand-mark {
+  color: oklch(72% 0.15 85);
+}
+
+[data-style='canopy'] .site-nav a {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 0.92rem;
+  border-radius: 999px;
+  padding: 0.18rem 0.7rem;
+}
+
+[data-style='canopy'] .site-nav a[aria-current='page'] {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* style switcher pill */
+[data-style='canopy'] .sw-btn {
+  border-radius: 999px;
+  border-width: 2px;
+}
+
+[data-style='canopy'] .sw-pop {
+  border-radius: var(--radius-m);
+  border-width: 2px;
+  box-shadow: 0 6px 0 oklch(58% 0.09 140 / 0.25);
+}
+
+/* ----- headings & prose ----- */
+
+[data-style='canopy'] h1,
+[data-style='canopy'] h2,
+[data-style='canopy'] h3 {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+[data-style='canopy'] .prose h2::before {
+  content: '✿ ';
+  color: oklch(72% 0.15 85);
+}
+
+[data-style='canopy'] .prose a {
+  text-decoration-thickness: 2.5px;
+  text-decoration-color: oklch(72% 0.15 85);
+  text-underline-offset: 3px;
+}
+
+[data-style='canopy'] .prose blockquote {
+  border-left: 5px solid oklch(72% 0.15 85);
+  border-radius: var(--radius-s);
+  background: var(--accent-dim);
+}
+
+/* ----- post list: little signposts ----- */
+
+[data-style='canopy'] .post-row {
+  background: var(--surface);
+  border: var(--border-w) solid oklch(58% 0.09 140 / 0.4);
+  border-radius: var(--radius-m);
+  margin-bottom: 0.6rem;
+  padding-inline: 1rem;
+  box-shadow: 0 3px 0 oklch(58% 0.09 140 / 0.18);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+[data-style='canopy'] .post-row:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 0 oklch(58% 0.09 140 / 0.3);
+  border-color: var(--accent);
+}
+
+[data-style='canopy'] .post-row .title {
+  font-family: var(--font-display);
+  font-weight: 550;
+}
+
+[data-style='canopy'] .post-row time {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+
+[data-style='canopy'] .year-h {
+  font-family: var(--font-display);
+  color: oklch(72% 0.15 85);
+}
+
+/* ----- tags as berries ----- */
+
+[data-style='canopy'] .tag,
+[data-style='canopy'] .post-tags a {
+  border-radius: 999px;
+  border-width: 2px;
+  background: var(--surface);
+}
+
+/* ----- code: bright plates ----- */
+
+[data-style='canopy'] .astro-code span {
+  color: var(--shiki-light);
+}
+
+[data-style='canopy'] .prose pre.astro-code {
+  background: oklch(99% 0.006 120) !important;
+  border: 2px solid oklch(58% 0.09 140 / 0.45);
+  border-radius: var(--radius-m);
+  box-shadow: 0 4px 0 oklch(58% 0.09 140 / 0.16);
+}
+
+[data-style='canopy'] .prose code:not(pre code) {
+  background: oklch(85% 0.07 85 / 0.35);
+  border: 0;
+  border-radius: 6px;
+}
+
+[data-style='canopy'] .copy-btn {
+  border-radius: 999px;
+}
+
+/* ----- footer ----- */
+
+[data-style='canopy'] .site-footer {
+  border-top: var(--border-w) dashed var(--border);
+}
+
+/* ===========================================================================
+   the overworld HUD (canopy-world.js) — only lives under [data-world]
+   ======================================================================== */
+
+[data-style='canopy'][data-world='on'] body {
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+[data-style='canopy'][data-world='on'] main,
+[data-style='canopy'][data-world='on'] .site-footer {
+  display: none;
+}
+
+[data-style='canopy'][data-world='on'] .site-header .container {
+  background: oklch(98.5% 0.012 120 / 0.9);
+  backdrop-filter: blur(6px);
+}
+
+.canopy-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.canopy-canvas.is-ambient {
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.canopy-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  font-family: 'Fredoka Variable', sans-serif;
+  color: oklch(28% 0.05 145);
+}
+
+.canopy-hud > * {
+  pointer-events: auto;
+}
+
+/* meta chip: coins, stars, powers */
+.canopy-hud .cp-meta {
+  position: absolute;
+  top: 4.4rem;
+  left: 1rem;
+  display: grid;
+  gap: 0.3rem;
+  background: oklch(98.5% 0.012 120 / 0.92);
+  border: 2px solid oklch(58% 0.09 140 / 0.5);
+  border-radius: 14px;
+  box-shadow: 0 3px 0 oklch(58% 0.09 140 / 0.2);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.95rem;
+}
+
+.canopy-hud .cp-meta b {
+  font-weight: 600;
+  color: oklch(58% 0.16 145);
+}
+
+.canopy-hud .cp-meta .cp-coin {
+  color: oklch(68% 0.14 85);
+}
+
+.canopy-hud .cp-powers {
+  display: flex;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.canopy-hud .cp-powers span {
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  border: 2px solid oklch(58% 0.09 140 / 0.35);
+  color: oklch(52% 0.055 145);
+  opacity: 0.45;
+}
+
+.canopy-hud .cp-powers span.on {
+  opacity: 1;
+  background: oklch(58% 0.16 145 / 0.14);
+  border-color: oklch(58% 0.16 145);
+  color: oklch(40% 0.13 145);
+}
+
+/* corner buttons */
+.canopy-hud .cp-corner {
+  position: absolute;
+  top: 4.4rem;
+  right: 1rem;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.canopy-hud .cp-corner button {
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.8rem;
+  background: oklch(98.5% 0.012 120 / 0.92);
+  border: 2px solid oklch(58% 0.09 140 / 0.5);
+  border-radius: 999px;
+  box-shadow: 0 2px 0 oklch(58% 0.09 140 / 0.25);
+  cursor: pointer;
+  color: inherit;
+}
+
+/* toasts: right side */
+.canopy-hud .cp-toasts {
+  position: absolute;
+  top: 8.6rem;
+  right: 1rem;
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+}
+
+.cp-toast {
+  font-size: 0.95rem;
+  font-weight: 550;
+  padding: 0.35rem 0.9rem;
+  background: oklch(98.5% 0.012 120 / 0.95);
+  border: 2px solid oklch(58% 0.09 140 / 0.5);
+  border-radius: 999px;
+  box-shadow: 0 3px 0 oklch(58% 0.09 140 / 0.2);
+  animation: cp-toast-in 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.cp-toast.gold {
+  border-color: oklch(68% 0.14 85);
+  color: oklch(52% 0.12 85);
+}
+
+.cp-toast.power {
+  border-color: oklch(58% 0.16 145);
+  color: oklch(45% 0.15 145);
+}
+
+@keyframes cp-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px) scale(0.9);
+  }
+}
+
+/* read card (near an article tree) */
+.canopy-hud .cp-card {
+  position: absolute;
+  left: 50%;
+  bottom: 6.2rem;
+  transform: translateX(-50%);
+  width: min(480px, 86vw);
+  background: oklch(98.5% 0.012 120 / 0.96);
+  border: 2px solid oklch(58% 0.16 145);
+  border-radius: 18px;
+  box-shadow: 0 5px 0 oklch(58% 0.09 140 / 0.25);
+  padding: 0.8rem 1.1rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.canopy-hud .cp-card[hidden] {
+  display: none;
+}
+
+.canopy-hud .cp-card b {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.canopy-hud .cp-card span {
+  display: block;
+  font-family: 'Nunito Variable', sans-serif;
+  font-size: 0.85rem;
+  color: oklch(42% 0.06 145);
+  margin-top: 0.15rem;
+}
+
+.canopy-hud .cp-card i {
+  display: block;
+  font-style: normal;
+  font-size: 0.78rem;
+  color: oklch(58% 0.16 145);
+  margin-top: 0.35rem;
+  font-weight: 600;
+}
+
+/* course banner */
+.canopy-hud .cp-course {
+  position: absolute;
+  top: 4.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 0.35rem 1.1rem;
+  background: oklch(98.5% 0.012 120 / 0.92);
+  border: 2px solid oklch(68% 0.14 85);
+  border-radius: 999px;
+  color: oklch(48% 0.12 85);
+}
+
+.canopy-hud .cp-course[hidden] {
+  display: none;
+}
+
+/* help line + intro overlay */
+.canopy-hud .cp-help {
+  position: absolute;
+  bottom: 0.9rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8rem;
+  color: oklch(42% 0.06 145 / 0.85);
+  background: oklch(98.5% 0.012 120 / 0.8);
+  padding: 0.2rem 0.9rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.canopy-hud .cp-overlay {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  background: oklch(98.5% 0.012 120 / 0.95);
+  border: 2px solid oklch(58% 0.16 145);
+  border-radius: 20px;
+  box-shadow: 0 6px 0 oklch(58% 0.09 140 / 0.25);
+  padding: 1.1rem 1.7rem;
+  transition: opacity 0.4s ease;
+}
+
+.canopy-hud .cp-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.canopy-hud .cp-overlay b {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: oklch(58% 0.16 145);
+}
+
+.canopy-hud .cp-overlay span {
+  display: block;
+  font-family: 'Nunito Variable', sans-serif;
+  font-size: 0.9rem;
+  color: oklch(42% 0.06 145);
+  margin-top: 0.3rem;
+}
+
+/* touch controls */
+.canopy-hud .cp-stick {
+  position: absolute;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  border: 2px solid oklch(58% 0.09 140 / 0.5);
+  background: oklch(98.5% 0.012 120 / 0.5);
+  transform: translate(-50%, -50%);
+}
+
+.canopy-hud .cp-stick i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  background: oklch(58% 0.16 145 / 0.6);
+}
+
+.canopy-hud .cp-cluster {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 1.2rem;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: end;
+}
+
+.canopy-hud .cp-cluster button {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  border: 2px solid oklch(58% 0.09 140 / 0.6);
+  background: oklch(98.5% 0.012 120 / 0.88);
+  box-shadow: 0 4px 0 oklch(58% 0.09 140 / 0.3);
+  color: inherit;
+}
+
+.canopy-hud .cp-cluster button[disabled] {
+  opacity: 0.35;
+}
+
+.canopy-hud .cp-cluster button:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 oklch(58% 0.09 140 / 0.3);
+}
+
+/* return chip on article pages */
+.cp-return {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 5;
+  font-family: 'Fredoka Variable', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 550;
+  padding: 0.4rem 1rem;
+  background: oklch(98.5% 0.012 120 / 0.95);
+  border: 2px solid oklch(58% 0.16 145);
+  border-radius: 999px;
+  box-shadow: 0 3px 0 oklch(58% 0.09 140 / 0.25);
+  color: oklch(40% 0.13 145);
+  text-decoration: none;
+}
+
+/* solo toast on article pages (power-up banked) */
+.cp-toast.cp-solo {
+  position: fixed;
+  top: 4.6rem;
+  right: 1rem;
+  z-index: 6;
+}
+
+@media (max-width: 640px) {
+  .canopy-hud .cp-meta {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .canopy-hud .cp-help {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-style='canopy'] .post-row,
+  [data-style='canopy'] .post-row:hover {
+    transition: none;
+    transform: none;
+  }
+}

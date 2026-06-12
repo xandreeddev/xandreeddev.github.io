@@ -37,6 +37,10 @@ import '@fontsource/vt323';
 import '@fontsource/michroma';
 import '@fontsource-variable/outfit';
 import '@fontsource-variable/martian-mono';
+// canopy
+import '@fontsource-variable/fredoka';
+import '@fontsource-variable/nunito';
+import '@fontsource-variable/nunito/wght-italic.css';
 
 import '../styles/global.css';
 import '../styles/gazette.css';
@@ -45,6 +49,7 @@ import '../styles/zine.css';
 import '../styles/system.css';
 import '../styles/vector.css';
 import '../styles/sodium.css';
+import '../styles/canopy.css';
 
 interface Props {
   title: string;
@@ -70,6 +75,7 @@ const STYLES = [
   { id: 'system', tag: 'retro desk', dots: ['oklch(87% 0.012 95)', 'oklch(20% 0.006 90)', 'oklch(99.5% 0.002 95)'] },
   { id: 'vector', tag: 'context overworld', dots: ['oklch(11% 0.015 165)', 'oklch(87% 0.21 155)', 'oklch(72% 0.24 340)'] },
   { id: 'sodium', tag: 'night drive', dots: ['oklch(14% 0.03 260)', 'oklch(78% 0.15 60)', 'oklch(80% 0.12 210)'] },
+  { id: 'canopy', tag: 'overworld', dots: ['oklch(96% 0.025 130)', 'oklch(58% 0.16 145)', 'oklch(72% 0.15 85)'] },
 ];
 ---
 
@@ -80,7 +86,7 @@ const STYLES = [
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <script is:inline>
       (() => {
-        const known = ['phosphor', 'gazette', 'aurora', 'zine', 'system', 'vector', 'sodium'];
+        const known = ['phosphor', 'gazette', 'aurora', 'zine', 'system', 'vector', 'sodium', 'canopy'];
         let s = null;
         try {
           s = localStorage.getItem('style');
@@ -244,6 +250,7 @@ const STYLES = [
       const WORLDS: Record<string, () => Promise<{ mount: () => { unmount: () => void } }>> = {
         vector: () => import('../scripts/vector-world.js'),
         sodium: () => import('../scripts/sodium-world.js'),
+        canopy: () => import('../scripts/canopy-world.js'),
       };
       let world: { unmount: () => void } | null = null;
       let owner: string | null = null;

@@ -3,8 +3,8 @@
 Astro 5 static site, built with Bun, deployed to GitHub Pages at https://xandreed.dev
 on every push to `main`. **No React, no framework JS** — hand-written CSS and two small
 inline scripts; the one exception is the lazy-loaded vanilla Three.js chunks for the
-`vector` and `sodium` styles. That constraint is part of the site's identity, not an
-accident.
+`vector`, `sodium` and `canopy` styles. That constraint is part of the site's identity,
+not an accident.
 
 ## Commands
 
@@ -35,13 +35,14 @@ in dev. When touching the vector world or touch controls, test with real pointer
 | `src/styles/` | `global.css` = token contract + default style (phosphor); one file per other style |
 | `src/scripts/vector-world.js` | The flyable star system (~2.5k lines), lazy-loaded only for `vector` |
 | `src/scripts/sodium-world.js` | The night-drive game (~1.5k lines), lazy-loaded only for `sodium` |
+| `src/scripts/canopy-world.js` | The 3D platformer (~1.3k lines), lazy-loaded only for `canopy` |
 | `.github/workflows/deploy.yml` | Build with Bun (frozen lockfile) → upload-pages-artifact → deploy-pages |
 
 ## The style system (core invariant)
 
-Seven design systems switched live via `data-style` on `<html>`: **phosphor**
+Eight design systems switched live via `data-style` on `<html>`: **phosphor**
 (default, dark), **gazette** (light), **aurora** (dark), **zine** (light),
-**system** (light), **vector** (dark), **sodium** (dark). Choice persists in `localStorage.style`; first visit follows
+**system** (light), **vector** (dark), **sodium** (dark), **canopy** (light). Choice persists in `localStorage.style`; first visit follows
 `prefers-color-scheme` (light → gazette, dark → phosphor). A pre-paint inline script in
 `Base.astro` sets the attribute before first render — keep it inline and first.
 
@@ -174,6 +175,24 @@ Rules that keep it healthy:
 - If a world's `mount()` throws, the Base.astro bootstrap blacklists that style
   for the session (`failed` set). Before that guard, a throwing mount looped
   mount → catch → re-sync forever, leaking a WebGL context per attempt.
+
+## Canopy world
+
+`canopy-world.js` is the third world in the `WORLDS` map — a 3D platformer:
+
+- Power-ups derive from articles read (`canopy-read` set, thresholds 1/3/6/10:
+  double jump, dash, glide, bloom boost) — article pages record the read in
+  ambient mode, no renderer. Coins (`canopy-coins`) and course stars
+  (`canopy-stars`) persist; player position round-trips via sessionStorage.
+- Collision is AABB-only (`boxes` + `findGround()`): platforms never rotate.
+  Movers shift their box and carry the player standing on it (`groundBox`).
+  Article trees are a slug-hashed spiral — any post count works; saplings
+  swap to bloom trees per read at mount.
+- The three courses are mulberry-seeded island chains offset +700x per index
+  — far enough that fog hides them from the hub. Falling below y -34
+  respawns at the hub or course start.
+- Jump feel: coyote time + jump buffering + variable height (release early,
+  rise less). Don't "fix" those as bugs.
 
 ## Deploy / domain
 
