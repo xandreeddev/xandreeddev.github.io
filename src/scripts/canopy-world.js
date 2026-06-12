@@ -478,7 +478,38 @@ export function mount() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(SKY);
-  scene.fog = new THREE.Fog(SKY, 120, 420);
+  scene.fog = new THREE.Fog(0xc9e7f2, 120, 420);
+
+  /* gradient sky dome + sun disc — a flat clear color reads like a void */
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uTime;
+      varying vec3 vDir;
+      void main() {
+        float h = clamp(vDir.y, 0.0, 1.0);
+        vec3 zenith = vec3(0.32, 0.62, 0.92);
+        vec3 horizon = vec3(0.82, 0.92, 0.95);
+        vec3 col = mix(horizon, zenith, smoothstep(0.02, 0.55, h));
+        vec3 sdir = normalize(vec3(0.49, 0.76, 0.33));
+        float sd = dot(vDir, sdir);
+        col += vec3(1.0, 0.95, 0.78) * smoothstep(0.9985, 0.9995, sd);          /* disc */
+        col += vec3(1.0, 0.9, 0.6) * pow(max(sd, 0.0), 90.0) * 0.28;            /* halo */
+        col = mix(col, vec3(0.86, 0.93, 0.9), smoothstep(0.12, 0.0, vDir.y));   /* haze */
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(700, 24, 12), skyMat);
+  sky.frustumCulled = false;
+  scene.add(sky);
 
   const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 900);
 
@@ -627,6 +658,80 @@ export function mount() {
     scene.add(under);
   }
 
+  /* ----- the elder tree: the landmark the whole meadow bends around ----- */
+
+  {
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a4e2a, roughness: 0.9 });
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.4, 24, 12), trunkMat);
+    trunk.position.y = 12;
+    trunk.castShadow = true;
+    const blobB = (x, y, z, s) => {
+      const g = new THREE.IcosahedronGeometry(s, 1);
+      g.translate(x, y, z);
+      return g;
+    };
+    const crownGeo = bakeVertexAO(
+      mergeGeometries([
+        blobB(0, 0, 0, 7.5),
+        blobB(5.5, 2.5, 1.5, 4.6),
+        blobB(-5.2, 2.2, -2, 4.8),
+        blobB(1, 5.5, -4, 4.2),
+        blobB(-1.5, 1.5, 5, 4.4),
+        blobB(2.5, -2.5, 3.5, 3.6),
+      ]),
+      -7,
+      9,
+      0.55,
+    );
+    const crown = new THREE.Mesh(
+      crownGeo,
+      new THREE.MeshStandardMaterial({ color: 0x4fae5e, roughness: 0.85, flatShading: true, vertexColors: true }),
+    );
+    crown.position.y = 27;
+    crown.castShadow = true;
+    /* roots flare out */
+    const rootMat = trunkMat;
+    const roots = new THREE.Group();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const root = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.1, 4.5, 6), rootMat);
+      root.position.set(Math.cos(a) * 3.2, 1.6, Math.sin(a) * 3.2);
+      root.rotation.z = Math.cos(a) * 0.55;
+      root.rotation.x = -Math.sin(a) * 0.55;
+      root.castShadow = true;
+      roots.add(root);
+    }
+    scene.add(trunk, crown, roots);
+    treeCols.push({ x: 0, z: 0, r: 3.6 });
+  }
+
+  /* distant floating islands: hand-tinted silhouettes past the fog */
+  {
+    const parts = [];
+    for (let i = 0; i < 5; i++) {
+      const a = hash01(`isl${i}`) * Math.PI * 2;
+      const r = 300 + hash01(`islr${i}`) * 80;
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const y = 30 + hash01(`islh${i}`) * 55;
+      const s = 12 + hash01(`isls${i}`) * 16;
+      /* polyhedra are non-indexed — de-index the rest or the merge fails */
+      const top = new THREE.BoxGeometry(s, s * 0.18, s * 0.8).toNonIndexed();
+      top.translate(x, y, z);
+      const cone = new THREE.ConeGeometry(s * 0.34, s * 0.7, 6).toNonIndexed();
+      cone.rotateX(Math.PI);
+      cone.translate(x, y - s * 0.42, z);
+      const tuft1 = new THREE.IcosahedronGeometry(s * 0.22, 0);
+      tuft1.translate(x + s * 0.2, y + s * 0.28, z);
+      parts.push(top, cone, tuft1);
+    }
+    const islands = new THREE.Mesh(
+      mergeGeometries(parts),
+      new THREE.MeshBasicMaterial({ color: 0x9fc4d8, fog: false }),
+    );
+    scene.add(islands);
+  }
+
   /* ----- decor: trees, grass, flowers, clouds ----- */
 
   {
@@ -715,7 +820,7 @@ export function mount() {
     petal.translate(0, 0.55, 0);
     const flowerGeo = mergeGeometries([petal, stemG]);
     const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
-    const FN = 160;
+    const FN = 300;
     const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, FN);
     for (let i = 0; i < FN; i++) {
       const a = hash01(`fa${i}`) * Math.PI * 2;
@@ -727,6 +832,99 @@ export function mount() {
       flowers.setColorAt(i, cv);
     }
     scene.add(flowers);
+
+    /* bushes: half-buried leaf blobs */
+    const bushGeo = bakeVertexAO(
+      mergeGeometries([
+        (() => { const g = new THREE.IcosahedronGeometry(0.9, 1); return g; })(),
+        (() => { const g = new THREE.IcosahedronGeometry(0.6, 1); g.translate(0.7, -0.1, 0.2); return g; })(),
+        (() => { const g = new THREE.IcosahedronGeometry(0.55, 1); g.translate(-0.6, -0.12, -0.25); return g; })(),
+      ]),
+      -0.9,
+      1.0,
+      0.5,
+    );
+    const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true, vertexColors: true });
+    const BN = 90;
+    const bushes = new THREE.InstancedMesh(bushGeo, bushMat, BN);
+    bushes.castShadow = true;
+    for (let i = 0; i < BN; i++) {
+      const a = hash01(`ba${i}`) * Math.PI * 2;
+      const r = 10 + hash01(`br${i}`) * (HUB_R - 14);
+      const s = 0.6 + hash01(`bs${i}`) * 0.9;
+      q.setFromAxisAngle(UPY, hash01(`bq${i}`) * Math.PI);
+      sc.set(s, s, s);
+      m4.compose(pos.set(Math.cos(a) * r, 0.45 * s, Math.sin(a) * r), q, sc);
+      bushes.setMatrixAt(i, m4);
+      cv.setHSL(0.29 + hash01(`bc${i}`) * 0.14, 0.5, 0.36 + hash01(`bl${i}`) * 0.12);
+      bushes.setColorAt(i, cv);
+    }
+    scene.add(bushes);
+
+    /* rocks: flattened dodecahedra */
+    const rockGeo = bakeVertexAO(new THREE.DodecahedronGeometry(0.8, 0), -0.8, 0.8, 0.55);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: true, vertexColors: true });
+    const RN = 60;
+    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, RN);
+    rocks.castShadow = true;
+    for (let i = 0; i < RN; i++) {
+      const a = hash01(`ra${i}`) * Math.PI * 2;
+      const r = 8 + hash01(`rr${i}`) * (HUB_R - 11);
+      const s = 0.5 + hash01(`rs${i}`) * 1.1;
+      q.setFromAxisAngle(UPY, hash01(`rq${i}`) * Math.PI);
+      sc.set(s, s * 0.62, s);
+      m4.compose(pos.set(Math.cos(a) * r, 0.28 * s, Math.sin(a) * r), q, sc);
+      rocks.setMatrixAt(i, m4);
+      cv.setHSL(0.55 + hash01(`rc${i}`) * 0.08, 0.08, 0.5 + hash01(`rl${i}`) * 0.16);
+      rocks.setColorAt(i, cv);
+    }
+    scene.add(rocks);
+
+    /* fallen logs — walkable micro-platforms */
+    const logGeo = new THREE.CylinderGeometry(0.5, 0.55, 3.6, 9);
+    logGeo.rotateZ(Math.PI / 2);
+    bakeVertexAO(logGeo, -0.55, 0.55, 0.6);
+    const logMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true, vertexColors: true });
+    const LN = 14;
+    const logs = new THREE.InstancedMesh(logGeo, logMat, LN);
+    logs.castShadow = true;
+    for (let i = 0; i < LN; i++) {
+      const a = hash01(`la${i}`) * Math.PI * 2;
+      const r = 18 + hash01(`lr${i}`) * (HUB_R - 32);
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      q.setFromAxisAngle(UPY, hash01(`lq${i}`) * Math.PI);
+      sc.set(1, 1, 1);
+      m4.compose(pos.set(x, 0.5, z), q, sc);
+      logs.setMatrixAt(i, m4);
+      cv.setHSL(0.07 + hash01(`lc${i}`) * 0.03, 0.35, 0.3 + hash01(`ll${i}`) * 0.08);
+      logs.setColorAt(i, cv);
+      addBox(x, 0.5, z, 1.9, 0.5, 1.9);
+    }
+    scene.add(logs);
+
+    /* tiny mushroom clusters */
+    const shroomletGeo = mergeGeometries([
+      (() => { const g = new THREE.CylinderGeometry(0.05, 0.07, 0.22, 5); g.translate(0, 0.11, 0); return g; })(),
+      (() => { const g = new THREE.SphereGeometry(0.13, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2); g.translate(0, 0.2, 0); return g; })(),
+      (() => { const g = new THREE.CylinderGeometry(0.04, 0.06, 0.16, 5); g.translate(0.18, 0.08, 0.06); return g; })(),
+      (() => { const g = new THREE.SphereGeometry(0.09, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2); g.translate(0.18, 0.14, 0.06); return g; })(),
+    ]);
+    const shroomletMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75 });
+    const SN = 70;
+    const shroomlets = new THREE.InstancedMesh(shroomletGeo, shroomletMat, SN);
+    for (let i = 0; i < SN; i++) {
+      const a = hash01(`sma${i}`) * Math.PI * 2;
+      const r = 9 + hash01(`smr${i}`) * (HUB_R - 13);
+      const s = 0.9 + hash01(`sms${i}`) * 1.2;
+      q.setFromAxisAngle(UPY, hash01(`smq${i}`) * Math.PI);
+      sc.set(s, s, s);
+      m4.compose(pos.set(Math.cos(a) * r, 0, Math.sin(a) * r), q, sc);
+      shroomlets.setMatrixAt(i, m4);
+      cv.set([0xe25548, 0xf0b432, 0xb8a8f0][i % 3]);
+      shroomlets.setColorAt(i, cv);
+    }
+    scene.add(shroomlets);
   }
 
   const clouds = [];
@@ -740,6 +938,89 @@ export function mount() {
     sp.scale.set(60 + hash01(`cs${i}`) * 50, 26 + hash01(`cw${i}`) * 20, 1);
     scene.add(sp);
     clouds.push(sp);
+  }
+
+  /* drifting pollen — the air itself moves */
+  let pollen = null;
+  {
+    const N = 200;
+    const arr = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const a = hash01(`pa${i}`) * Math.PI * 2;
+      const r = hash01(`pr${i}`) * (HUB_R - 6);
+      arr[i * 3] = Math.cos(a) * r;
+      arr[i * 3 + 1] = 0.6 + hash01(`ph${i}`) * 7;
+      arr[i * 3 + 2] = Math.sin(a) * r;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    pollen = new THREE.Points(
+      g,
+      new THREE.PointsMaterial({
+        color: 0xfff4d8,
+        size: 0.16,
+        transparent: true,
+        opacity: 0.7,
+        sizeAttenuation: true,
+        depthWrite: false,
+      }),
+    );
+    pollen.userData.base = arr.slice();
+    scene.add(pollen);
+  }
+
+  /* butterflies fluttering between the flowers */
+  const butterflies = [];
+  {
+    const wingGeo = new THREE.PlaneGeometry(0.26, 0.34);
+    wingGeo.translate(0.13, 0, 0);
+    const colors = [0xf0a8c0, 0xb8a8f0, 0xf7e07a, 0x9adcf0];
+    for (let i = 0; i < 8; i++) {
+      const g = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({
+        color: colors[i % 4],
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const l = new THREE.Mesh(wingGeo, mat);
+      l.rotation.y = Math.PI;
+      const r = new THREE.Mesh(wingGeo, mat);
+      g.add(l, r);
+      const a = hash01(`bfa${i}`) * Math.PI * 2;
+      const rad = 12 + hash01(`bfr${i}`) * (HUB_R - 30);
+      g.userData = { cx: Math.cos(a) * rad, cz: Math.sin(a) * rad, ph: i * 1.7, l, r };
+      scene.add(g);
+      butterflies.push(g);
+    }
+  }
+
+  /* dust puffs + sparkles: one pooled sprite system */
+  const puffs = [];
+  {
+    for (let i = 0; i < 12; i++) {
+      const s = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: cloudTexture(),
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      s.visible = false;
+      scene.add(s);
+      puffs.push({ s, life: 0, vy: 0, grow: 0 });
+    }
+  }
+  function puffAt(x, y, z, color = 0xf2efe2, big = 1, rise = 0.6) {
+    const p = puffs.find((q2) => q2.life <= 0) ?? puffs[0];
+    p.s.material.color.set(color);
+    p.s.position.set(x, y, z);
+    p.s.scale.setScalar(0.6 * big);
+    p.life = 0.55;
+    p.vy = rise;
+    p.grow = 2.6 * big;
+    p.s.visible = true;
   }
 
   /* ----- article trees: saplings bloom when read ----- */
@@ -811,6 +1092,8 @@ export function mount() {
     const addCoin = (x, y, z) => {
       const m = new THREE.Mesh(coinGeo, coinMat);
       m.position.set(x, y, z);
+      m.userData.baseY = y;
+      m.userData.ph = (x * 7 + z * 13) % 6.28;
       m.castShadow = true;
       scene.add(m);
       coins.push(m);
@@ -929,6 +1212,20 @@ export function mount() {
       ctx.arc(u, v, rr, 0, Math.PI * 2);
       ctx.fill();
     };
+    /* the trail: a sandy path tracing the article spiral */
+    ctx.strokeStyle = 'rgba(196, 168, 118, 0.5)';
+    ctx.lineWidth = (2.6 / HUB_R) * 0.5 * 1024 * 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= posts.length; i++) {
+      const a = i * 0.55 + 0.1;
+      const r = Math.min(13 + i * 1.85, HUB_R - 14) - 3.4;
+      const u = ((Math.cos(a) * r) / HUB_R) * 0.5 * 1024 + 512;
+      const v = ((-Math.sin(a) * r) / HUB_R) * 0.5 * 1024 + 512;
+      if (i === 0) ctx.moveTo(u, v);
+      else ctx.lineTo(u, v);
+    }
+    ctx.stroke();
     for (const t of treeCols) blot(t.x, t.z, t.r * 2.6, 0.34);
     for (const p of pipes) blot(p.x, p.z, 3.6, 0.4);
     for (const s of shrooms) blot(s.x, s.z, 2.6, 0.34);
@@ -943,6 +1240,7 @@ export function mount() {
     scene.add(overlay);
   }
 
+  const courseSpots = []; // island positions — decorated after the build
   /* a course: floating islands ascending to a star, offset far from the hub */
   function buildCourse(k) {
     const rnd = mulberry(hash32(`course-${k}`));
@@ -956,6 +1254,7 @@ export function mount() {
       g.add(top, base);
       g.position.set(x, y, z);
       scene.add(g);
+      courseSpots.push({ x, y, z, hx });
       return addBox(x, y, z, hx, 0.35, hz, { mesh: g });
     };
     /* start pad */
@@ -1002,6 +1301,49 @@ export function mount() {
     return { spawn: new THREE.Vector3(ox, 1.2, 0) };
   }
   const courses = [buildCourse(0), buildCourse(1), buildCourse(2)];
+
+  /* course atmosphere: drifting rock shards around the islands + a flag
+     on every start pad */
+  {
+    const shardGeo = new THREE.DodecahedronGeometry(0.7, 0);
+    const shardMat = new THREE.MeshStandardMaterial({ color: 0xa8b8c4, roughness: 0.9, flatShading: true });
+    const N = Math.min(140, courseSpots.length * 2);
+    const shards = new THREE.InstancedMesh(shardGeo, shardMat, N);
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < N; i++) {
+      const sp = courseSpots[i % courseSpots.length];
+      const a = hash01(`shard${i}`) * Math.PI * 2;
+      const d = sp.hx + 2.5 + hash01(`shardd${i}`) * 5;
+      const s = 0.35 + hash01(`shards${i}`) * 0.8;
+      m4.makeRotationY(hash01(`shardq${i}`) * Math.PI);
+      m4.scale(new THREE.Vector3(s, s, s));
+      m4.setPosition(
+        sp.x + Math.cos(a) * d,
+        sp.y - 1.5 - hash01(`shardy${i}`) * 4,
+        sp.z + Math.sin(a) * d,
+      );
+      shards.setMatrixAt(i, m4);
+    }
+    scene.add(shards);
+
+    const flagPoleMat = new THREE.MeshStandardMaterial({ color: 0xe8dcc2, roughness: 0.6 });
+    for (let k = 0; k < courses.length; k++) {
+      const sp = courses[k].spawn;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 4.2, 6), flagPoleMat);
+      pole.position.set(sp.x + 3, 2.1, sp.z - 2);
+      pole.castShadow = true;
+      const flag = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 0.9),
+        new THREE.MeshStandardMaterial({
+          color: [0x58c46a, 0x4aa8e0, 0xf0b432][k],
+          side: THREE.DoubleSide,
+          roughness: 0.7,
+        }),
+      );
+      flag.position.set(sp.x + 3.75, 3.7, sp.z - 2);
+      scene.add(pole, flag);
+    }
+  }
 
   /* ----- the player: a little sprout-bot ----- */
 
@@ -1083,7 +1425,7 @@ export function mount() {
   let nearPipe = -1;
   let birdT = 4;
 
-  const SPAWN = new THREE.Vector3(0, 1.2, 8);
+  const SPAWN = new THREE.Vector3(0, 1.2, 19);
   {
     let placed = false;
     const saved = store.playerState();
@@ -1462,12 +1804,14 @@ export function mount() {
         jumpBuf = 0;
         usedDouble = false;
         squash = -0.5;
+        puffAt(player.position.x, player.position.y + 0.1, player.position.z, 0xf2efe2, 0.8, 0.3);
         audio.jump();
       } else if (powerOn('djump') && !usedDouble) {
         vel.y = jumpV() * 0.92;
         usedDouble = true;
         jumpBuf = 0;
         squash = -0.5;
+        puffAt(player.position.x, player.position.y + 0.3, player.position.z, 0xcdf2d2, 0.9, 0.2);
         audio.djump();
       }
     }
@@ -1517,6 +1861,7 @@ export function mount() {
       if (!onGround) {
         if (vel.y < -18) squash = 1;
         else if (vel.y < -6) squash = 0.5;
+        if (vel.y < -6) puffAt(player.position.x, player.position.y + 0.15, player.position.z, 0xf2efe2, Math.min(1.6, -vel.y * 0.06), 0.5);
         audio.land();
       }
       vel.y = 0;
@@ -1545,6 +1890,7 @@ export function mount() {
         usedDouble = false;
         sh.squish = 1;
         squash = -0.7;
+        puffAt(sh.x, 2.1, sh.z, 0xf2c4be, 1.2, 0.8);
         audio.bounce();
       }
     }
@@ -1552,10 +1898,14 @@ export function mount() {
     /* --- coins --- */
     for (let i = coins.length - 1; i >= 0; i--) {
       const c = coins[i];
-      if (!reduced) c.rotation.y += dt * 3.2;
+      if (!reduced) {
+        c.rotation.y += dt * 3.2;
+        c.position.y = c.userData.baseY + Math.sin(time * 2 + c.userData.ph) * 0.12;
+      }
       tmpV.copy(c.position).sub(player.position);
       tmpV.y -= 0.8;
       if (tmpV.lengthSq() < 1.7) {
+        puffAt(c.position.x, c.position.y, c.position.z, 0xffd766, 0.7, 1.4);
         scene.remove(c);
         coins.splice(i, 1);
         coinCount = store.coins(1);
@@ -1657,12 +2007,42 @@ export function mount() {
         cl.position.x += dt * 1.4;
         if (cl.position.x > 420) cl.position.x = -420;
       }
+      const pp = pollen.geometry.attributes.position;
+      const base = pollen.userData.base;
+      for (let i = 0; i < pp.count; i++) {
+        pp.array[i * 3] = base[i * 3] + Math.sin(time * 0.4 + i) * 1.8;
+        pp.array[i * 3 + 1] = base[i * 3 + 1] + Math.sin(time * 0.7 + i * 2.1) * 0.9;
+        pp.array[i * 3 + 2] = base[i * 3 + 2] + Math.cos(time * 0.3 + i * 1.3) * 1.8;
+      }
+      pp.needsUpdate = true;
+      for (const bf of butterflies) {
+        const u = bf.userData;
+        bf.position.set(
+          u.cx + Math.sin(time * 0.5 + u.ph) * 4,
+          1.4 + Math.sin(time * 1.1 + u.ph) * 0.8,
+          u.cz + Math.cos(time * 0.37 + u.ph) * 4,
+        );
+        bf.rotation.y = time * 0.5 + u.ph + Math.PI / 2;
+        const flap = Math.sin(time * 14 + u.ph) * 0.9;
+        u.l.rotation.y = Math.PI - flap;
+        u.r.rotation.y = flap;
+      }
+    }
+    for (const p of puffs) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.s.position.y += p.vy * dt;
+      p.s.scale.addScalar(p.grow * dt);
+      p.s.material.opacity = Math.max(0, p.life * 1.4);
+      if (p.life <= 0) p.s.visible = false;
     }
     birdT -= dt;
     if (birdT <= 0) {
       birdT = 3 + Math.random() * 6;
       audio.bird();
     }
+
+    sky.position.copy(player.position);
 
     /* --- sun follows (texel-snapped) --- */
     const sx = Math.round(player.position.x / 4) * 4;

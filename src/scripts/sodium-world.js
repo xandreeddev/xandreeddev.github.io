@@ -931,6 +931,53 @@ export function mount() {
     scene.add(shore);
   }
 
+  /* ----- the city on the horizon: dark towers, lit windows, haze ----- */
+
+  {
+    const win = shared('windows', () => {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 64, 128);
+      for (let y = 4; y < 124; y += 8)
+        for (let x = 4; x < 60; x += 8) {
+          const r = hash01(`w${x}:${y}`);
+          if (r < 0.38) {
+            ctx.fillStyle = r < 0.1 ? '#9fd8ff' : '#ffc97a';
+            ctx.globalAlpha = 0.5 + r;
+            ctx.fillRect(x, y, 4, 5);
+          }
+        }
+      ctx.globalAlpha = 1;
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    });
+    const parts = [];
+    for (let i = 0; i < 44; i++) {
+      const a = (i / 44) * Math.PI * 2 + hash01(`bld${i}`) * 0.1;
+      const r = 430 + hash01(`bldr${i}`) * 50;
+      const w = 14 + hash01(`bldw${i}`) * 18;
+      const h = 22 + hash01(`bldh${i}`) * 58;
+      const g = new THREE.BoxGeometry(w, h, w);
+      g.translate(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r);
+      parts.push(g);
+    }
+    const skyline = new THREE.Mesh(
+      mergeGeometries(parts),
+      new THREE.MeshStandardMaterial({
+        color: 0x0b0f22,
+        roughness: 0.9,
+        emissive: 0xffffff,
+        emissiveMap: win,
+        emissiveIntensity: 0.55,
+      }),
+    );
+    scene.add(skyline);
+  }
+
   /* ----- wind turbines over the water ----- */
 
   const rotors = [];
@@ -1017,6 +1064,108 @@ export function mount() {
     const lakeGlow = new THREE.PointLight(0x6fd8ff, 220, 130, 2);
     lakeGlow.position.set(0, 14, 0);
     scene.add(lakeGlow);
+  }
+
+  /* ----- road furniture: reflector posts + cat-eye studs ----- */
+
+  {
+    const postGeo = new THREE.BoxGeometry(0.1, 0.85, 0.1);
+    postGeo.translate(0, 0.42, 0);
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xc8cdd8, roughness: 0.6 });
+    const headGeo = new THREE.BoxGeometry(0.12, 0.14, 0.05);
+    headGeo.translate(0, 0.78, 0);
+    const headMat = new THREE.MeshStandardMaterial({
+      color: 0x444444,
+      emissive: 0xfff2cf,
+      emissiveIntensity: 1.6,
+    });
+    const PN = 96;
+    const posts = new THREE.InstancedMesh(postGeo, postMat, PN);
+    const heads = new THREE.InstancedMesh(headGeo, headMat, PN);
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < PN; i++) {
+      const a = (Math.floor(i / 2) / (PN / 2)) * Math.PI * 2 + 0.06;
+      const side = i % 2 ? 1 : -1;
+      const r = ROAD_R + side * (ROAD_W + 0.7);
+      m4.makeRotationY(-a);
+      m4.setPosition(Math.cos(a) * r, 0, Math.sin(a) * r);
+      posts.setMatrixAt(i, m4);
+      heads.setMatrixAt(i, m4);
+    }
+    scene.add(posts, heads);
+
+    const studGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.05, 6);
+    const studMat = new THREE.MeshStandardMaterial({
+      color: 0x333322,
+      emissive: 0xfff8d8,
+      emissiveIntensity: 1.3,
+    });
+    const SN2 = 72;
+    const studs = new THREE.InstancedMesh(studGeo, studMat, SN2);
+    for (let i = 0; i < SN2; i++) {
+      const a = ((i + 0.5) / SN2) * Math.PI * 2;
+      m4.makeRotationY(-a);
+      m4.setPosition(Math.cos(a) * ROAD_R, 0.05, Math.sin(a) * ROAD_R);
+      studs.setMatrixAt(i, m4);
+    }
+    scene.add(studs);
+  }
+
+  /* ----- night flora: bushes + rocks between the trees ----- */
+
+  {
+    const blobS = (x, y, z, s) => {
+      const g = new THREE.IcosahedronGeometry(s, 1);
+      g.translate(x, y, z);
+      return g;
+    };
+    const bushGeo = bakeVertexAO(
+      mergeGeometries([blobS(0, 0, 0, 0.9), blobS(0.7, -0.1, 0.2, 0.6), blobS(-0.6, -0.1, -0.25, 0.55)]),
+      -0.9,
+      1,
+      0.5,
+    );
+    const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true, vertexColors: true });
+    const BN = 110;
+    const bushes = new THREE.InstancedMesh(bushGeo, bushMat, BN);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
+    const cv = new THREE.Color();
+    const UPY = new THREE.Vector3(0, 1, 0);
+    const pos = new THREE.Vector3();
+    for (let i = 0; i < BN; i++) {
+      const a = hash01(`sba${i}`) * Math.PI * 2;
+      let r = LAKE_R + 8 + hash01(`sbr${i}`) * 320;
+      if (Math.abs(r - ROAD_R) < ROAD_W + 2) r = ROAD_R + ROAD_W + 2.5 + hash01(`sbf${i}`) * 6;
+      const s = 0.7 + hash01(`sbs${i}`) * 1.1;
+      q.setFromAxisAngle(UPY, hash01(`sbq${i}`) * Math.PI);
+      sc.set(s, s, s);
+      m4.compose(pos.set(Math.cos(a) * r, 0.4 * s, Math.sin(a) * r), q, sc);
+      bushes.setMatrixAt(i, m4);
+      if (i % 3 === 0) cv.setHSL(0.85 + hash01(`sbc${i}`) * 0.08, 0.45, 0.18 + hash01(`sbl${i}`) * 0.08);
+      else cv.setHSL(0.45 + hash01(`sbc${i}`) * 0.1, 0.4, 0.13 + hash01(`sbl${i}`) * 0.08);
+      bushes.setColorAt(i, cv);
+    }
+    scene.add(bushes);
+
+    const rockGeo = bakeVertexAO(new THREE.DodecahedronGeometry(0.8, 0), -0.8, 0.8, 0.55);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: true, vertexColors: true });
+    const RN = 70;
+    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, RN);
+    for (let i = 0; i < RN; i++) {
+      const a = hash01(`sra${i}`) * Math.PI * 2;
+      let r = LAKE_R + 6 + hash01(`srr${i}`) * 340;
+      if (Math.abs(r - ROAD_R) < ROAD_W + 2) r = ROAD_R - ROAD_W - 2.5 - hash01(`srf${i}`) * 4;
+      const s = 0.5 + hash01(`srs${i}`) * 1.3;
+      q.setFromAxisAngle(UPY, hash01(`srq${i}`) * Math.PI);
+      sc.set(s, s * 0.6, s);
+      m4.compose(pos.set(Math.cos(a) * r, 0.25 * s, Math.sin(a) * r), q, sc);
+      rocks.setMatrixAt(i, m4);
+      cv.setHSL(0.65 + hash01(`src${i}`) * 0.05, 0.12, 0.22 + hash01(`srl${i}`) * 0.1);
+      rocks.setColorAt(i, cv);
+    }
+    scene.add(rocks);
   }
 
   /* ----- trees: instanced, shadowed ----- */
@@ -1183,6 +1332,48 @@ export function mount() {
     fireflies.userData.base = arr.slice();
     scene.add(fireflies);
   }
+
+  /* drift smoke: pooled sprites puffing off the rear wheels */
+  const smoke = [];
+  {
+    for (let i = 0; i < 14; i++) {
+      const s = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: cloudTexture(),
+          color: 0xb9c2d8,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      s.visible = false;
+      scene.add(s);
+      smoke.push({ s, life: 0 });
+    }
+  }
+  let smokeT = 0;
+  function smokeAt(x, y, z) {
+    const p = smoke.find((q) => q.life <= 0) ?? smoke[0];
+    p.s.position.set(x, y, z);
+    p.s.scale.setScalar(0.8);
+    p.life = 0.7;
+    p.s.visible = true;
+  }
+
+  /* a shooting star now and then */
+  const meteor = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glowTexture('#cfe8ff'),
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+  );
+  meteor.scale.set(14, 0.7, 1);
+  meteor.visible = false;
+  scene.add(meteor);
+  const meteorState = { t: 9, active: 0, dx: 0, dy: 0 };
 
   /* ----- billboards: the docs, dark until discovered ----- */
 
@@ -2186,6 +2377,51 @@ export function mount() {
 
     audio.engine(speed, keys.gas ? 1 : 0);
     audio.skid(drifting || (offroad && speed > 14 && !airborne));
+
+    /* drift smoke pours off the rear wheels */
+    if ((drifting || (offroad && speed > 16)) && !airborne) {
+      smokeT -= dt;
+      if (smokeT <= 0) {
+        smokeT = 0.055;
+        const back = fwdOf(carA, tmpV2).multiplyScalar(-1.6);
+        smokeAt(
+          car.position.x + back.x + (Math.random() - 0.5) * 1.2,
+          car.position.y + 0.35,
+          car.position.z + back.z + (Math.random() - 0.5) * 1.2,
+        );
+      }
+    }
+    for (const p of smoke) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.s.position.y += dt * 1.6;
+      p.s.scale.addScalar(dt * 4.2);
+      p.s.material.opacity = Math.max(0, p.life * 0.5);
+      if (p.life <= 0) p.s.visible = false;
+    }
+
+    /* shooting stars */
+    meteorState.t -= dt;
+    if (meteorState.t <= 0 && !reduced) {
+      meteorState.t = 9 + Math.random() * 14;
+      meteorState.active = 0.9;
+      const a = Math.random() * Math.PI * 2;
+      meteor.position.set(
+        car.position.x + Math.cos(a) * 240,
+        130 + Math.random() * 60,
+        car.position.z + Math.sin(a) * 240,
+      );
+      meteorState.dx = (Math.random() - 0.5) * 220;
+      meteorState.dy = -60 - Math.random() * 40;
+      meteor.visible = true;
+    }
+    if (meteorState.active > 0) {
+      meteorState.active -= dt;
+      meteor.position.x += meteorState.dx * dt;
+      meteor.position.y += meteorState.dy * dt;
+      meteor.material.opacity = Math.min(0.8, meteorState.active * 2);
+      if (meteorState.active <= 0) meteor.visible = false;
+    }
 
     /* --- env animation --- */
     skyMat.uniforms.uTime.value = reduced ? 12 : time;

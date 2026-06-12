@@ -200,6 +200,9 @@ Rules that keep it healthy:
   respawns at the hub or course start.
 - Jump feel: coyote time + jump buffering + variable height (release early,
   rise less). Don't "fix" those as bugs.
+- `mergeGeometries` requires all-indexed or all-non-indexed inputs: polyhedra
+  (Icosahedron/Dodecahedron) are non-indexed — `.toNonIndexed()` the Box/Cone
+  parts or the merge returns null and the mount dies.
 
 ## Deploy / domain
 
