@@ -35,5 +35,11 @@
     "astro": "^5.8.0",
     "rehype-autolink-headings": "^7.1.0",
     "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "^4.4.0",
+    "@gltf-transform/core": "^4.4.0",
+    "@gltf-transform/extensions": "^4.4.0",
+    "@gltf-transform/functions": "^4.4.0"
   }
 }

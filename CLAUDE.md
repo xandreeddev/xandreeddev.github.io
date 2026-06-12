@@ -35,7 +35,9 @@ in dev. When touching the vector world or touch controls, test with real pointer
 | `src/styles/` | `global.css` = token contract + default style (phosphor); one file per other style |
 | `src/scripts/vector-world.js` | The flyable star system (~2.5k lines), lazy-loaded only for `vector` |
 | `src/scripts/sodium-world.js` | The night-drive game (~1.5k lines), lazy-loaded only for `sodium` |
-| `src/scripts/canopy-world.js` | The 3D platformer (~1.3k lines), lazy-loaded only for `canopy` |
+| `src/scripts/canopy-world.js` | The forest action-RPG (~2.8k lines), lazy-loaded only for `canopy` |
+| `public/models/canopy/` | Meshy-generated rigged GLBs for canopy (hero/gremlin/ogre/axe + animation clips) |
+| `tools/optimize-glb.mjs` | GLB pipeline: strip animation files to skeleton+clip, inspect rigs |
 | `.github/workflows/deploy.yml` | Build with Bun (frozen lockfile) → upload-pages-artifact → deploy-pages |
 
 ## The style system (core invariant)
@@ -192,32 +194,49 @@ Rules that keep it healthy:
 
 ## Canopy world
 
-`canopy-world.js` is the third world in the `WORLDS` map — a 3D platformer:
+`canopy-world.js` is the third world in the `WORLDS` map — a dense-forest
+action-adventure (TERA-berserker kit on a platformer base):
 
-- Power-ups derive from articles read (`canopy-read` set, thresholds 1/3/6/10:
-  double jump, dash, glide, bloom boost) — article pages record the read in
-  ambient mode, no renderer. Coins (`canopy-coins`) and course stars
+- Talents derive from articles read (`canopy-read` set, thresholds 1/3/6/10:
+  double jump, cyclone skill, ground-slam ultimate, berserk) — article pages
+  record the read in ambient mode, no renderer. Articles are CHESTS on the
+  trail spiral (slug-hashed; any post count works) — closed until read, then
+  open with a glow beam. Coins (`canopy-coins`) and boss stars
   (`canopy-stars`) persist; player position round-trips via sessionStorage.
 - Collision is AABB-only (`boxes` + `findGround()`): platforms never rotate.
   Movers shift their box and carry the player standing on it (`groundBox`).
-  Article trees are a slug-hashed spiral — any post count works; saplings
-  swap to bloom trees per read at mount.
-- The three courses are mulberry-seeded island chains offset +700x per index
-  — far enough that fog hides them from the hub. Falling below y -34
-  respawns at the hub or course start.
-- Jump feel: coyote time + jump buffering + variable height (release early,
-  rise less). Don't "fix" those as bugs.
-- `mergeGeometries` requires all-indexed or all-non-indexed inputs: polyhedra
-  (Icosahedron/Dodecahedron) are non-indexed — `.toNonIndexed()` the Box/Cone
-  parts or the merge returns null and the mount dies.
-- The player is a cel-shaded chibi rig (`MeshToonMaterial` + shared 3-step
-  `toneRamp`, inverted-hull ink outlines riding each limb group). The face is
-  an UNLIT canvas patch (`MeshBasicMaterial`) hugging the skull, redrawn only
-  on blink — and the hair crown's front hemisphere must stop at the hairline
-  (`thetaLength ~1.1`); a full-wrap crown sits at r 0.37 and silently covers
-  the r 0.348 face patch. The scarf is a follow-the-leader chain in world
-  space: set seg positions first, `player.updateMatrixWorld()`, THEN `lookAt`
-  — lookAt reads each seg's own stale matrixWorld otherwise.
+  Jump feel: coyote time + jump buffering + variable height. Don't "fix"
+  those as bugs.
+- The hero, gremlin, ogre and axe are Meshy-generated rigged GLBs in
+  `public/models/canopy/` (~4 MB total: meshopt + webp via
+  `tools/optimize-glb.mjs` and the gltf-transform CLI; animation GLBs are
+  stripped to skeleton + clip). They load via `loadAssets()` after the
+  procedural world is already running; failure degrades to a capsule
+  placeholder and a toast, never a blacklisted mount.
+- Meshy rig gotchas, all earned: (1) `normalizeHeight` measures BOTH through
+  node transforms and skinned bind sampling and trusts whichever is
+  character-plausible — the GLBs are internally inconsistent about units, in
+  both directions. (2) Anything parented to a bone (the axe) inherits the
+  rig's centimeter bind scale — counter the hand bone's WORLD scale, not the
+  model scale. (3) Clips need their Hips position tracks (dropping them sinks
+  the rig) but XZ must be pinned per-frame and wrong-unit tracks rescaled
+  against the set's idle (`fixRootUnits`) — Block1 ships an order of
+  magnitude off. (4) The block pose freezes mid-clip (`action.paused`); the
+  clip's tail lowers the guard and its end pose is garbage.
+- GTAOPass parks Points/Lines but NOT sprites in its G-buffer pre-pass — any
+  near sprite composites as a floating opaque black rectangle. The module
+  patches `_overrideVisibility` to park sprites too; damage numbers are DOM
+  chips (`.cp-pop`) projected per-frame, not sprites, for the same reason.
+  Single-sided planes have the same beauty/G-buffer mismatch — the chest
+  signs are thin boxes, not planes.
+- Combat: foes (`makeFoe`) are `SkeletonUtils.clone`s with per-foe material
+  clones (hit flash). Hub gremlin camps respawn on a timer; the three boss
+  gates warp to mulberry-seeded arena clearings offset +700x per index (fog
+  hides them). Bosses: dormant → taunt → chase/swing + timed slam shockwave
+  rings (jump over), enrage under 50%, star on death. Leaving an arena
+  resets its boss. Falling below y -34 respawns at the hub or arena spawn.
+- A `localStorage['canopy-debug']` flag exposes `window.__cw` (axe grip
+  wrap, foes, damageFoe, a raycast `pick`) for headless QA.
 
 ## Deploy / domain
 

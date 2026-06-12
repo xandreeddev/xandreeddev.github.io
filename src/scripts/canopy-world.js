@@ -1,19 +1,23 @@
 /* ---------------------------------------------------------------------------
-   CANOPY — the overworld.
+   CANOPY — the deep forest.
 
-   The blog as a sunny 3D platformer. The homepage is a forest meadow you
-   run and jump through as a little sprout-bot: every article is a tree
-   along the winding path — a pale sapling until you read it, then it
-   blooms. Reading articles unlocks movement power-ups (double jump, dash,
-   glide, bloom boost); coins are scattered everywhere; mushrooms bounce;
-   three warp pipes lead to seeded floating-island courses with a star at
-   the summit. Soft sun shadows, drifting clouds, synth chirps — all
-   procedural, no assets.
+   The blog as a sunny action-adventure. The homepage is a dense forest you
+   explore as an axe-wielding adventurer: every article is a treasure chest
+   along the winding trail — locked shut until you read it, then it stands
+   open and glowing. Reading articles unlocks combat talents (double jump,
+   cyclone, ground slam, berserk); gremlins prowl around their camps; three
+   mossy gates warp to boss arenas where a forest ogre guards a star.
 
-   Controls (desktop): WASD/arrows run (camera-relative) · space jump,
-   hold to glide once unlocked · shift dash · drag to orbit the camera ·
-   wheel zooms · ↵ read at a tree / enter a pipe · M sound. Touch: left
-   stick runs, A jumps (hold = glide), B dashes; tap the card to read.
+   Combat (TERA-berserker grammar): a 3-hit basic chain that cancels into
+   itself, a hold-to-block that eats frontal hits, a charge, a spin skill on
+   cooldown and a rage-fueled ground-slam ultimate. Hero, gremlin and ogre
+   are Meshy-generated rigged GLBs (cel-shaded in-engine); everything else
+   stays procedural.
+
+   Controls (desktop): WASD run · space jump · LMB/F attack · RMB/C block ·
+   E cyclone · Q slam · shift charge · drag orbits · ↵ open chest / gate ·
+   M sound. Touch: left stick, right cluster (A jump · B charge · ⚔ · 🛡 ·
+   🌀 · 💥); tap the card to open.
 
    Loaded lazily, only while [data-style="canopy"] is active. mount()
    reads the post list from the DOM and returns { unmount }.
@@ -28,9 +32,27 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+
+/* GTAOPass parks Points/Lines while rendering its G-buffer but forgets
+   Sprites — any nearby sprite (dust puff, cloud) becomes an opaque quad in
+   the AO input and composites as a floating black rectangle. Park sprites
+   the same way; _restoreVisibility brings back everything cached. */
+const gtaoOverrideVisibility = GTAOPass.prototype._overrideVisibility;
+GTAOPass.prototype._overrideVisibility = function () {
+  gtaoOverrideVisibility.call(this);
+  const cache = this._visibilityCache;
+  this.scene.traverse((object) => {
+    if (object.isSprite && object.visible) {
+      object.visible = false;
+      cache.push(object);
+    }
+  });
+};
 
 const SKY = 0xa9cdf2;
-const LEAF = 0x3f9e52;
 const GOLD = 0xf0b432;
 const WOOD = 0x8a5a33;
 
@@ -44,12 +66,12 @@ const MUTE_KEY = 'canopy-mute';
 const FX_KEY = 'canopy-fx';
 const PLAYER_KEY = 'canopy-player'; // sessionStorage: position across visits
 
-/* power-ups unlock from articles read — the whole point of the forest */
+/* talents unlock from articles read — chests opened grow the warrior */
 const POWERS = [
-  { id: 'djump', name: 'double sprout', desc: 'jump again mid-air', need: 1 },
-  { id: 'dash', name: 'zip dash', desc: 'shift: a burst of speed', need: 3 },
-  { id: 'glide', name: 'leaf glide', desc: 'hold jump to drift down', need: 6 },
-  { id: 'boost', name: 'bloom boost', desc: 'higher jumps, faster runs', need: 10 },
+  { id: 'djump', name: 'double jump', desc: 'jump again mid-air', need: 1 },
+  { id: 'skill', name: 'cyclone', desc: 'E: spinning axe storm', need: 3 },
+  { id: 'ult', name: 'ground slam', desc: 'Q: rage-fueled cataclysm', need: 6 },
+  { id: 'berserk', name: 'berserk', desc: 'hit harder, run faster', need: 10 },
 ];
 
 const store = {
@@ -165,7 +187,7 @@ function readPosts() {
   });
 }
 
-/* ----- synth audio: chirpy platformer sounds, no assets ----- */
+/* ----- synth audio: chirpy adventure sounds, no sample assets ----- */
 
 function makeAudio() {
   let ctx = null;
@@ -231,6 +253,35 @@ function makeAudio() {
       blip('sine', f, f * 1.3, 0.09, 0.025);
       if (Math.random() < 0.5) blip('sine', f * 1.1, f * 0.9, 0.07, 0.02, 0.12);
     },
+    /* --- combat --- */
+    swing: () => blip('sawtooth', 320, 80, 0.12, 0.09),
+    hit: () => {
+      blip('square', 190, 60, 0.09, 0.14);
+      blip('triangle', 90, 40, 0.12, 0.1, 0.01);
+    },
+    block: () => blip('triangle', 950, 480, 0.08, 0.13),
+    skillWhirl: () => {
+      blip('sawtooth', 180, 720, 0.45, 0.1);
+      blip('sawtooth', 240, 880, 0.4, 0.07, 0.08);
+    },
+    ultBoom: () => {
+      blip('sine', 130, 28, 0.7, 0.3);
+      blip('sawtooth', 90, 30, 0.5, 0.14, 0.04);
+    },
+    hurt: () => blip('square', 230, 80, 0.16, 0.16),
+    chest: () => {
+      blip('triangle', 420, 860, 0.18, 0.12);
+      blip('square', 1175, 1175, 0.14, 0.08, 0.16);
+    },
+    gremlin: () => {
+      const f = 620 + Math.random() * 320;
+      blip('square', f, f * 1.6, 0.06, 0.05);
+      blip('square', f * 1.2, f * 0.8, 0.06, 0.04, 0.07);
+    },
+    roar: () => {
+      blip('sawtooth', 95, 42, 0.85, 0.22);
+      blip('square', 70, 38, 0.7, 0.12, 0.1);
+    },
     dispose() {
       try {
         ctx?.close();
@@ -251,7 +302,7 @@ const shared = (key, make) => {
   return t;
 };
 
-/* meadow ground: soft green checker with flower speckles */
+/* forest floor: deeper mossy checker with leaf-litter speckles */
 function meadowTexture() {
   return shared('meadow', () => {
     const t = 32;
@@ -261,13 +312,13 @@ function meadowTexture() {
     for (let y = 0; y < 8; y++)
       for (let x = 0; x < 8; x++) {
         const v = ((x + y) % 2 ? 0.92 : 1) * (0.94 + hash01(`m${x}:${y}`) * 0.12);
-        ctx.fillStyle = `rgb(${Math.round(126 * v)}, ${Math.round(188 * v)}, ${Math.round(108 * v)})`;
+        ctx.fillStyle = `rgb(${Math.round(112 * v)}, ${Math.round(172 * v)}, ${Math.round(98 * v)})`;
         ctx.fillRect(x * t, y * t, t, t);
       }
     for (let i = 0; i < 26; i++) {
       const x = hash01(`fx${i}`) * 256;
       const y = hash01(`fy${i}`) * 256;
-      ctx.fillStyle = ['#f7e07a', '#f0f0f0', '#f0a8c0'][i % 3];
+      ctx.fillStyle = ['#f7e07a', '#caa86a', '#f0a8c0'][i % 3];
       ctx.beginPath();
       ctx.arc(x, y, 1.6, 0, Math.PI * 2);
       ctx.fill();
@@ -329,7 +380,7 @@ const wrapText = (ctx, text, maxW, maxLines) => {
   return lines;
 };
 
-/* a wooden trail sign for each article tree */
+/* a wooden trail sign for each treasure chest */
 function signTexture(post, read) {
   const c = document.createElement('canvas');
   c.width = 512;
@@ -358,43 +409,219 @@ function signTexture(post, read) {
   lines.forEach((ln, k) => ctx.fillText(ln, 256, 84 + k * 52));
   ctx.font = '26px "Nunito Variable", sans-serif';
   ctx.fillStyle = read ? '#ffe9a8' : 'rgba(248,238,221,0.75)';
-  ctx.fillText(read ? `${post.date} · ✿ bloomed` : `${post.date} · press ⏎ to read`, 256, 222);
+  ctx.fillText(read ? `${post.date} · ⚿ plundered` : `${post.date} · press ⏎ to open`, 256, 222);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   return tex;
 }
 
+/* ----- rigged assets: Meshy GLBs, cel-shaded in-engine ----- */
+
+const MODEL_BASE = '/models/canopy/';
+
+/* hero clip → file map; walk/run ship with the rig, the rest are presets */
+const HERO_CLIPS = ['idle', 'walk', 'run', 'jump', 'fall', 'atk1', 'atk2', 'atk3', 'block', 'charge', 'skill', 'ult'];
+const MINION_CLIPS = ['idle', 'walk', 'run', 'atk', 'hit', 'die'];
+const BOSS_CLIPS = ['idle', 'walk', 'taunt', 'swing', 'slam', 'die'];
+
+/* Meshy clips carry root motion on Hips — pin the XZ so physics stays the
+   only thing that moves the character (Y keeps crouch/leap bob). The clips
+   NEED their position tracks: with them removed the rig renders sunk, so
+   wrong-unit tracks are rescaled (fixRootUnits) rather than dropped. */
+const rootTrackOf = (clip) =>
+  clip.tracks.find((t) => {
+    if (!t.name.endsWith('.position')) return false;
+    const node = t.name.slice(0, -'.position'.length);
+    return node === 'Hips' || node === 'Armature';
+  });
+
+function pinRoot(clip) {
+  const tr = rootTrackOf(clip);
+  if (tr) {
+    const v = tr.values;
+    for (let i = 3; i < v.length; i += 3) {
+      v[i] = v[0];
+      v[i + 2] = v[2];
+    }
+  }
+  return clip;
+}
+
+/* some presets (Block1) author the root position an order of magnitude off
+   the rig's unit family — compare against the set's idle clip and rescale */
+function fixRootUnits(clips) {
+  const ref = rootTrackOf(clips.idle ?? clips.walk)?.values[1];
+  if (!ref) return;
+  for (const clip of Object.values(clips)) {
+    const tr = rootTrackOf(clip);
+    if (!tr || !tr.values[1]) continue;
+    const ratio = Math.abs(ref / tr.values[1]);
+    if (ratio > 5 || ratio < 0.2) {
+      for (let i = 0; i < tr.values.length; i++) tr.values[i] *= ratio;
+    }
+  }
+}
+
+/* swap baked PBR for toon: same base color map, hard 3-step terminator */
+function toonify(root, ramp) {
+  root.traverse((o) => {
+    if (!o.isMesh && !o.isSkinnedMesh) return;
+    const old = o.material;
+    if (!old) return;
+    const m = new THREE.MeshToonMaterial({ map: old.map ?? null, color: old.color?.clone() ?? 0xffffff, gradientMap: ramp });
+    if (old.map) old.map.colorSpace = THREE.SRGBColorSpace;
+    o.material = m;
+    o.castShadow = true;
+    o.frustumCulled = false; // skinned bounds lag the pose; tiny scene, draw always
+    old.dispose();
+  });
+}
+
+/* scale + ground a model: feet at y=0, exact height in world units.
+   Meshy's rigged GLBs are internally inconsistent about units: the hero
+   measures right through node transforms (geometry cm × armature 0.01)
+   but its skinned bind sampling lands in cm; the gremlin/ogre are the
+   exact opposite (geometry meters under a 0.01 node, bind sampling in
+   meters). No single measurement works for both — so take both, and trust
+   whichever yields a character-plausible height. */
+function normalizeHeight(root, height) {
+  root.updateWorldMatrix(true, true);
+  const nodeBox = new THREE.Box3().setFromObject(root);
+  const skinBox = new THREE.Box3();
+  const v = new THREE.Vector3();
+  let skinned = false;
+  root.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    skinned = true;
+    const pos = o.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(pos.count / 240));
+    for (let i = 0; i < pos.count; i += step) {
+      v.fromBufferAttribute(pos, i);
+      o.applyBoneTransform(i, v); // mesh-local, skeleton-posed
+      v.applyMatrix4(o.bindMatrix); // → skeleton-world at root scale 1
+      skinBox.expandByPoint(v);
+    }
+  });
+  const plausible = (b) => {
+    const h = b.max.y - b.min.y;
+    return h > 0.3 && h < 6;
+  };
+  const box = skinned && plausible(skinBox) ? skinBox : nodeBox;
+  const h = Math.max(box.max.y - box.min.y, 1e-3);
+  const s = height / h;
+  root.scale.setScalar(s);
+  root.position.y = -box.min.y * s;
+  return s;
+}
+
+async function loadAssets(signal) {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  const get = (file) =>
+    new Promise((resolve, reject) => {
+      loader.load(MODEL_BASE + file, resolve, undefined, () => reject(new Error(`failed: ${file}`)));
+    });
+  const clipSet = async (prefix, names) => {
+    const entries = await Promise.all(
+      names.map(async (n) => {
+        const g = await get(`${prefix}.${n}.glb`);
+        const clip = g.animations[0];
+        clip.name = n;
+        return [n, clip];
+      }),
+    );
+    const clips = Object.fromEntries(entries);
+    fixRootUnits(clips);
+    for (const clip of Object.values(clips)) pinRoot(clip);
+    return clips;
+  };
+  const [hero, minion, boss, axe, heroClips, minionClips, bossClips] = await Promise.all([
+    get('hero.glb'),
+    get('minion.glb'),
+    get('boss.glb'),
+    get('axe.glb'),
+    clipSet('hero', HERO_CLIPS),
+    clipSet('minion', MINION_CLIPS),
+    clipSet('boss', BOSS_CLIPS),
+  ]);
+  if (signal.aborted) throw new Error('aborted');
+  return {
+    hero: { scene: hero.scene, clips: heroClips },
+    minion: { scene: minion.scene, clips: minionClips },
+    boss: { scene: boss.scene, clips: bossClips },
+    axe: axe.scene,
+  };
+}
+
+/* a tiny clip-state machine around THREE.AnimationMixer */
+function makeAnimator(root, clips) {
+  const mixer = new THREE.AnimationMixer(root);
+  const actions = {};
+  for (const [name, clip] of Object.entries(clips)) actions[name] = mixer.clipAction(clip);
+  let current = null;
+  const play = (name, { fade = 0.16, once = false, timeScale = 1, clamp = false } = {}) => {
+    if (current === name && !once) return actions[name];
+    const next = actions[name];
+    if (!next) return null;
+    next.reset();
+    next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+    next.clampWhenFinished = clamp || once;
+    next.timeScale = timeScale;
+    next.fadeIn(fade).play();
+    if (current && actions[current] && current !== name) actions[current].fadeOut(fade);
+    current = name;
+    return next;
+  };
+  return {
+    mixer,
+    actions,
+    play,
+    get current() {
+      return current;
+    },
+    duration: (name) => clips[name]?.duration ?? 1,
+  };
+}
+
 /* ----- HUD ----- */
 
 /* iPad gets the same legend as desktop — it just spells the touch binds */
 const HELP = coarse
-  ? 'stick runs · A jump · B dash · drag to look · tap the card to read'
-  : 'WASD run · space jump · shift dash · drag to look · ↵ read at a tree · M sound';
+  ? 'stick runs · A jump · B charge · ⚔ attack · 🛡 hold to block · drag to look · tap the card to open'
+  : 'WASD run · space jump · click/F attack · RMB/C block · E cyclone · Q slam · shift charge · ↵ open · M sound';
 
 function makeHud(powers, coins, stars, total) {
   const hud = document.createElement('div');
   hud.className = 'canopy-hud';
   hud.innerHTML = `
     <div class="cp-meta">
-      <div><span class="cp-coin">●</span> <b data-cp-coins>${coins}</b> &nbsp; ★ <b data-cp-stars>${stars}/3</b> &nbsp; ✿ <b data-cp-read>0/${total}</b></div>
+      <div><span class="cp-coin">●</span> <b data-cp-coins>${coins}</b> &nbsp; ★ <b data-cp-stars>${stars}/3</b> &nbsp; ⚿ <b data-cp-read>0/${total}</b></div>
+      <div class="cp-vitals">
+        <div class="cp-bar cp-hp" title="health"><i data-cp-hp></i></div>
+        <div class="cp-bar cp-rage" title="rage — fuels the ultimate"><i data-cp-rage></i></div>
+      </div>
+      <div class="cp-kit" data-cp-kit>
+        <span data-cp-k="skill" class="off"><b>🌀</b><i>E</i><em data-cp-cd="skill"></em></span>
+        <span data-cp-k="ult" class="off"><b>💥</b><i>Q</i><em data-cp-cd="ult"></em></span>
+      </div>
       <div class="cp-powers" data-cp-powers></div>
     </div>
     <div class="cp-corner"><button type="button" data-cp-fx aria-label="Toggle fancy rendering"></button><button type="button" data-cp-mute aria-label="Toggle sound"></button></div>
     <div class="cp-toasts" data-cp-toasts aria-live="polite"></div>
+    <div class="cp-bossbar" data-cp-bossbar hidden><b data-cp-bossname></b><div class="cp-bar cp-bosshp"><i data-cp-bosshp></i></div></div>
     <div class="cp-course" data-cp-course hidden></div>
     <div class="cp-card" data-cp-card hidden></div>
     <div class="cp-help" aria-hidden="true">${HELP}</div>
-    <div class="cp-overlay" data-cp-overlay><b>✿ the overworld</b><span>${
-      coarse
-        ? 'left thumb runs · A jumps · read articles to grow new powers'
-        : 'run the forest — every article you read unlocks a power-up'
-    }</span></div>
+    <div class="cp-overlay" data-cp-overlay><b>⚔ the deep forest</b><span data-cp-overlay-sub>growing the forest…</span></div>
     ${
       coarse
         ? `<div class="cp-stick" data-cp-stick hidden><i></i></div>
-    <div class="cp-cluster" data-cp-cluster>
+    <div class="cp-cluster cp-cluster-combat" data-cp-cluster>
+      <button type="button" data-cp-ult>💥</button>
+      <button type="button" data-cp-skill>🌀</button>
+      <button type="button" data-cp-block>🛡</button>
       <button type="button" data-cp-dash>B</button>
+      <button type="button" data-cp-atk>⚔</button>
       <button type="button" data-cp-jump>A</button>
     </div>`
         : ''
@@ -418,7 +645,7 @@ export function mount() {
   const ac = new AbortController();
   const { signal } = ac;
 
-  /* article pages: record the read (this is how powers grow) + way home */
+  /* article pages: record the read (this is how talents grow) + way home */
   if (!isWorld) {
     const slug = location.pathname.match(/^\/(?:posts|drafts)\/([^/]+)\/?$/)?.[1];
     if (slug) {
@@ -431,8 +658,8 @@ export function mount() {
         const note = document.createElement('div');
         note.className = `cp-toast cp-solo ${next ? 'power' : 'gold'}`;
         note.textContent = next
-          ? `✿ new power: ${next.name} — ${next.desc}`
-          : `✿ tree bloomed — ${n} read`;
+          ? `⚿ new talent: ${next.name} — ${next.desc}`
+          : `⚿ chest plundered — ${n} opened`;
         document.body.append(note);
         const noteT = setTimeout(() => note.remove(), 4500);
         signal.addEventListener('abort', () => {
@@ -481,7 +708,7 @@ export function mount() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(SKY);
-  scene.fog = new THREE.Fog(0xd3def5, 120, 420);
+  scene.fog = new THREE.Fog(0xc6d6ec, 90, 380);
 
   /* gradient sky dome + sun disc — a flat clear color reads like a void */
   const skyMat = new THREE.ShaderMaterial({
@@ -531,9 +758,10 @@ export function mount() {
   const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.25, 0.5, 0.9);
   /* day grade: split-tone + vibrance + the gentlest vignette, display-
      referred (after OutputPass). Daylight cut of the toy-render look:
-     shadows cool into lavender, highlights warm into cream */
+     shadows cool into lavender, highlights warm into cream. uHurt pulses
+     the edges red when the warrior takes a hit */
   const gradePass = new ShaderPass({
-    uniforms: { tDiffuse: { value: null } },
+    uniforms: { tDiffuse: { value: null }, uHurt: { value: 0 } },
     vertexShader: `
       varying vec2 vUv;
       void main() {
@@ -542,6 +770,7 @@ export function mount() {
       }`,
     fragmentShader: `
       uniform sampler2D tDiffuse;
+      uniform float uHurt;
       varying vec2 vUv;
       void main() {
         vec2 c = vUv - 0.5;
@@ -551,6 +780,7 @@ export function mount() {
         col *= mix(vec3(1.0), vec3(1.04, 1.0, 0.94), smoothstep(0.6, 1.0, luma) * 0.5);
         col = mix(vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), col, 1.12);
         col *= 1.0 - smoothstep(0.2, 0.9, dot(c, c)) * 0.16;
+        col = mix(col, vec3(0.78, 0.12, 0.1), smoothstep(0.12, 0.85, dot(c, c)) * uHurt);
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
@@ -564,7 +794,7 @@ export function mount() {
     thickness: 1,
     distanceFallOff: 1,
     scale: 1.4,
-      samples: coarse ? 6 : 8,
+    samples: coarse ? 6 : 8,
   });
   gtaoPass.updatePdMaterial({
     lumaPhi: 10,
@@ -634,9 +864,15 @@ export function mount() {
   scene.add(sun, sun.target);
   const SUN_OFF = new THREE.Vector3(90, 140, 60);
 
+  /* shared 3-step ramp: hard terminator, Genshin-style */
+  const toneRamp = new THREE.DataTexture(new Uint8Array([95, 170, 255]), 3, 1, THREE.RedFormat);
+  toneRamp.minFilter = toneRamp.magFilter = THREE.NearestFilter;
+  toneRamp.needsUpdate = true;
+  signal.addEventListener('abort', () => toneRamp.dispose());
+
   /* ----- collision world: everything walkable is an AABB ----- */
 
-  /* box: { x, y, z (center), hx, hy, hz, mesh?, mover? } */
+  /* box: { x, y, z (center), hx, hy, hz, mesh?, mover?, round? } */
   const boxes = [];
   const movers = [];
   const treeCols = []; // cylinders: { x, z, r }
@@ -648,7 +884,7 @@ export function mount() {
     return b;
   };
 
-  /* ----- the meadow ----- */
+  /* ----- the forest floor ----- */
 
   const HUB_R = 120;
   {
@@ -669,7 +905,22 @@ export function mount() {
     scene.add(under);
   }
 
-  /* ----- the elder tree: the landmark the whole meadow bends around ----- */
+  /* the trail spiral the chests live on — keep trees off it */
+  const trailAt = (i) => {
+    const a = i * 0.55 + hash01(posts[i]?.slug ?? String(i)) * 0.2;
+    const r = Math.min(13 + i * 1.85, HUB_R - 14);
+    return { a, r, x: Math.cos(a) * r, z: Math.sin(a) * r };
+  };
+  const chestSpots = posts.map((_, i) => trailAt(i));
+
+  /* gremlin camps: three clearings in the mid-ring */
+  const CAMPS = [0.9, 2.6, 4.6].map((a, i) => ({
+    x: Math.cos(a) * HUB_R * 0.52,
+    z: Math.sin(a) * HUB_R * 0.52,
+    idx: i,
+  }));
+
+  /* ----- the elder tree: the landmark the whole forest bends around ----- */
 
   {
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a4e2a, roughness: 0.9 });
@@ -700,12 +951,10 @@ export function mount() {
     );
     crown.position.y = 27;
     crown.castShadow = true;
-    /* roots flare out */
-    const rootMat = trunkMat;
     const roots = new THREE.Group();
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
-      const root = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.1, 4.5, 6), rootMat);
+      const root = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.1, 4.5, 6), trunkMat);
       root.position.set(Math.cos(a) * 3.2, 1.6, Math.sin(a) * 3.2);
       root.rotation.z = Math.cos(a) * 0.55;
       root.rotation.x = -Math.sin(a) * 0.55;
@@ -743,8 +992,10 @@ export function mount() {
     scene.add(islands);
   }
 
-  /* ----- decor: trees, grass, flowers, clouds ----- */
+  /* ----- decor: the DENSE forest — trees everywhere the game isn't ----- */
 
+  const arenaTreeSpots = []; // filled by buildArena, instanced with the rest
+  let plantForest; // called after arenas exist so one InstancedMesh covers all
   {
     const blob = (x, y, z, s) => {
       const g = new THREE.IcosahedronGeometry(s, 1);
@@ -765,34 +1016,68 @@ export function mount() {
     const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 3, 7);
     const trunkMat = new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.9 });
     const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, flatShading: true, vertexColors: true });
-    const N = 70;
-    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, N);
-    const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, N);
-    trunks.castShadow = canopies.castShadow = true;
-    const m4 = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const sc = new THREE.Vector3();
-    const cv = new THREE.Color();
-    const UPY = new THREE.Vector3(0, 1, 0);
-    const pos = new THREE.Vector3();
-    for (let i = 0; i < N; i++) {
-      /* ring the rim so the middle stays playable */
+
+    /* hub trees: pack the disc, then carve out everything playable —
+       the trail, chest clearings, camps, the platform yard, the gates */
+    const spots = [];
+    const clearOf = (x, z) => {
+      if (Math.hypot(x, z) < 11) return false; // elder tree + spawn
+      if (x > -16 && x < 10 && z > -20 && z < 0) return false; // platform yard
+      for (const c of chestSpots) if (Math.hypot(x - c.x, z - c.z) < 5.5) return false;
+      for (const c of CAMPS) if (Math.hypot(x - c.x, z - c.z) < 9) return false;
+      /* the spiral trail itself: distance to the nearest sample */
+      for (let i = 0; i <= posts.length; i++) {
+        const t = trailAt(Math.min(i, posts.length - 1));
+        if (Math.hypot(x - t.x, z - t.z) < 4.6) return false;
+      }
+      /* gates ring */
+      for (let k = 0; k < 3; k++) {
+        const a = -0.5 + k * 0.55;
+        if (Math.hypot(x - Math.cos(a) * (HUB_R - 22), z - Math.sin(a) * (HUB_R - 22)) < 7) return false;
+      }
+      return true;
+    };
+    for (let i = 0; i < 600 && spots.length < 210; i++) {
       const a = hash01(`ta${i}`) * Math.PI * 2;
-      const r = HUB_R * (0.72 + hash01(`tr${i}`) * 0.24);
+      const r = HUB_R * (0.16 + Math.sqrt(hash01(`tr${i}`)) * 0.82);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      const s = 0.9 + hash01(`ts${i}`) * 1.3;
-      q.setFromAxisAngle(UPY, hash01(`tq${i}`) * Math.PI);
-      sc.set(s, s, s);
-      m4.compose(pos.set(x, 1.5 * s, z), q, sc);
-      trunks.setMatrixAt(i, m4);
-      m4.compose(pos.set(x, (3 + 1.6) * s, z), q, sc);
-      canopies.setMatrixAt(i, m4);
-      cv.setHSL(0.3 + hash01(`tc${i}`) * 0.12, 0.55, 0.42 + hash01(`tl${i}`) * 0.14);
-      canopies.setColorAt(i, cv);
-      treeCols.push({ x, z, r: 1.1 * s });
+      if (!clearOf(x, z)) continue;
+      let ok = true;
+      for (const s of spots)
+        if (Math.hypot(x - s.x, z - s.z) < 3.4) {
+          ok = false;
+          break;
+        }
+      if (ok) spots.push({ x, z, s: 0.9 + hash01(`ts${i}`) * 1.7, seed: i });
     }
-    scene.add(trunks, canopies);
+
+    plantForest = () => {
+      const all = [...spots, ...arenaTreeSpots];
+      const N = all.length;
+      const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, N);
+      const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, N);
+      trunks.castShadow = canopies.castShadow = true;
+      const m4 = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const sc = new THREE.Vector3();
+      const cv = new THREE.Color();
+      const UPY = new THREE.Vector3(0, 1, 0);
+      const pos = new THREE.Vector3();
+      all.forEach((sp, i) => {
+        const s = sp.s;
+        q.setFromAxisAngle(UPY, hash01(`tq${sp.seed}`) * Math.PI);
+        sc.set(s, s, s);
+        m4.compose(pos.set(sp.x, 1.5 * s + (sp.y ?? 0), sp.z), q, sc);
+        trunks.setMatrixAt(i, m4);
+        m4.compose(pos.set(sp.x, (3 + 1.6) * s + (sp.y ?? 0), sp.z), q, sc);
+        canopies.setMatrixAt(i, m4);
+        cv.setHSL(0.3 + hash01(`tc${sp.seed}`) * 0.12, 0.55, 0.38 + hash01(`tl${sp.seed}`) * 0.14);
+        canopies.setColorAt(i, cv);
+        treeCols.push({ x: sp.x, z: sp.z, r: 1.1 * s, y: sp.y ?? 0 });
+      });
+      scene.add(trunks, canopies);
+    };
 
     /* grass tufts */
     const blades = [];
@@ -808,6 +1093,12 @@ export function mount() {
     }
     const tuftGeo = bakeVertexAO(mergeGeometries(blades), 0, 0.8, 0.5);
     const tuftMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true, vertexColors: true });
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
+    const cv = new THREE.Color();
+    const UPY = new THREE.Vector3(0, 1, 0);
+    const pos = new THREE.Vector3();
     const GN = coarse ? 250 : 500;
     const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, GN);
     for (let i = 0; i < GN; i++) {
@@ -856,7 +1147,7 @@ export function mount() {
       0.5,
     );
     const bushMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true, vertexColors: true });
-    const BN = 90;
+    const BN = 110;
     const bushes = new THREE.InstancedMesh(bushGeo, bushMat, BN);
     bushes.castShadow = true;
     for (let i = 0; i < BN; i++) {
@@ -936,6 +1227,39 @@ export function mount() {
       shroomlets.setColorAt(i, cv);
     }
     scene.add(shroomlets);
+
+    /* gremlin camp dressing: a crooked totem + a banner each */
+    for (const cmp of CAMPS) {
+      const g = new THREE.Group();
+      const totemMat = new THREE.MeshStandardMaterial({ color: 0x6e4a26, roughness: 0.9, flatShading: true });
+      let ty = 0;
+      for (let i = 0; i < 3; i++) {
+        const s = 0.55 - i * 0.1;
+        const seg = new THREE.Mesh(new RoundedBoxGeometry(s * 2, 0.7, s * 2, 2, 0.1), totemMat);
+        seg.position.y = ty + 0.35;
+        seg.rotation.y = hash01(`tot${cmp.idx}:${i}`) * 0.8;
+        seg.castShadow = true;
+        g.add(seg);
+        ty += 0.7;
+      }
+      const skullM = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.34, 1),
+        new THREE.MeshStandardMaterial({ color: 0xe8dcc2, roughness: 0.7, flatShading: true }),
+      );
+      skullM.position.y = ty + 0.3;
+      g.add(skullM);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 2.8, 5), totemMat);
+      pole.position.set(1.4, 1.4, 0.6);
+      const flag = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.9, 0.6),
+        new THREE.MeshStandardMaterial({ color: 0xb33a2e, side: THREE.DoubleSide, roughness: 0.8 }),
+      );
+      flag.position.set(1.85, 2.45, 0.6);
+      g.add(pole, flag);
+      g.position.set(cmp.x, 0, cmp.z);
+      scene.add(g);
+      addBox(cmp.x, 1.1, cmp.z, 0.6, 1.1, 0.6);
+    }
   }
 
   const clouds = [];
@@ -1009,7 +1333,7 @@ export function mount() {
   /* dust puffs + sparkles: one pooled sprite system */
   const puffs = [];
   {
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 18; i++) {
       const s = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: cloudTexture(),
@@ -1034,56 +1358,79 @@ export function mount() {
     p.s.visible = true;
   }
 
-  /* ----- article trees: saplings bloom when read ----- */
+  /* ----- treasure chests: one per article, on the trail spiral ----- */
 
-  const artTrees = [];
+  const chests = [];
   {
-    const signGeo = new THREE.PlaneGeometry(3.2, 1.6);
+    /* a thin BOX, not a plane: single-sided planes are invisible from
+       behind in the beauty pass but NOT in GTAO's depth pre-pass — the
+       mismatch composites a floating black rectangle */
+    const signGeo = new THREE.BoxGeometry(3.2, 1.6, 0.08);
     const postGeo = new THREE.CylinderGeometry(0.09, 0.11, 1.6, 6);
     const postMat = new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.9 });
-    /* bloom tree: round pink-white canopy; sapling: a sprout */
-    const bloomCanopy = mergeGeometries([
-      (() => { const g = new THREE.IcosahedronGeometry(1.6, 1); return g; })(),
-      (() => { const g = new THREE.IcosahedronGeometry(1.0, 1); g.translate(0.9, 0.6, 0.2); return g; })(),
-      (() => { const g = new THREE.IcosahedronGeometry(0.95, 1); g.translate(-0.85, 0.5, -0.3); return g; })(),
-    ]);
-    bakeVertexAO(bloomCanopy, -1.6, 2.4, 0.62);
-    const bloomMat = new THREE.MeshStandardMaterial({ color: 0xf2b8cc, roughness: 0.8, flatShading: true, vertexColors: true });
-    const sproutMat = new THREE.MeshStandardMaterial({ color: 0x9ccf8a, roughness: 0.85, flatShading: true });
-    const trunkG = new THREE.CylinderGeometry(0.18, 0.3, 2.2, 6);
-    const trunkM = new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.9 });
+    const signBackMat = new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 0.9 });
+    const woodM = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.85 });
+    const woodDarkM = new THREE.MeshStandardMaterial({ color: 0x6e4426, roughness: 0.9 });
+    const goldM = new THREE.MeshStandardMaterial({ color: GOLD, metalness: 0.55, roughness: 0.35, emissive: 0x4a3406, emissiveIntensity: 0.25 });
+    const glowM = new THREE.MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.85 });
 
-    /* the trail: a spiral from the center out, one tree per article */
     posts.forEach((post, i) => {
       const isRead = post.slug && read.has(post.slug);
-      const a = i * 0.55 + hash01(post.slug ?? String(i)) * 0.2;
-      const r = 13 + i * 1.85;
-      const x = Math.cos(a) * Math.min(r, HUB_R - 14);
-      const z = Math.sin(a) * Math.min(r, HUB_R - 14);
+      const { x, z } = chestSpots[i];
       const g = new THREE.Group();
-      const trunk = new THREE.Mesh(trunkG, trunkM);
-      trunk.position.y = isRead ? 1.1 : 0.5;
-      trunk.scale.setScalar(isRead ? 1 : 0.55);
-      trunk.castShadow = true;
-      const crown = new THREE.Mesh(isRead ? bloomCanopy : new THREE.IcosahedronGeometry(0.7, 1), isRead ? bloomMat : sproutMat);
-      crown.position.y = isRead ? 3.3 : 1.35;
-      crown.castShadow = true;
-      g.add(trunk, crown);
+
+      /* body: rounded box with gold straps and feet */
+      const body = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(1.5, 0.85, 1.0, 2, 0.1), -0.45, 0.45, 0.6), woodM);
+      body.position.y = 0.45;
+      body.castShadow = true;
+      const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.88, 1.04), goldM);
+      strapL.position.set(-0.45, 0.45, 0);
+      const strapR = strapL.clone();
+      strapR.position.x = 0.45;
+      g.add(body, strapL, strapR);
+
+      /* lid: hinged at the back edge — open = read */
+      const lid = new THREE.Group();
+      lid.position.set(0, 0.88, -0.5);
+      const lidMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.5, 10, 1, false, 0, Math.PI), woodDarkM);
+      lidMesh.rotation.z = Math.PI / 2;
+      lidMesh.position.set(0, 0, 0.5);
+      lidMesh.castShadow = true;
+      const lidStrap = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.16, 10, 1, false, 0, Math.PI), goldM);
+      lidStrap.rotation.z = Math.PI / 2;
+      lidStrap.position.set(0, 0, 0.5);
+      const lock = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.1), goldM);
+      lock.position.set(0, 0.05, 1.03);
+      lid.add(lidMesh, lidStrap, lock);
+      g.add(lid);
+
+      /* the hoard inside (only shows once open) + the glow column */
+      const loot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.34, 1), goldM);
+      loot.position.set(0, 0.78, 0);
+      loot.visible = !!isRead;
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.5, 2.6, 10, 1, true), glowM.clone());
+      beam.position.y = 2.1;
+      beam.visible = !!isRead;
+      beam.material.side = THREE.DoubleSide;
+      beam.material.depthWrite = false;
+      g.add(loot, beam);
+      if (isRead) lid.rotation.x = -1.9;
+
       /* the sign, angled toward the center path */
       const sPost = new THREE.Mesh(postGeo, postMat);
-      sPost.position.set(1.6, 0.8, 0);
-      const sign = new THREE.Mesh(
-        signGeo,
-        new THREE.MeshStandardMaterial({ map: signTexture(post, isRead), roughness: 0.8 }),
-      );
-      sign.position.set(1.6, 1.9, 0);
+      sPost.position.set(1.9, 0.8, 0);
+      const faceMat = new THREE.MeshStandardMaterial({ map: signTexture(post, isRead), roughness: 0.8 });
+      /* box face order: +x -x +y -y +z(front) -z(back) */
+      const sign = new THREE.Mesh(signGeo, [signBackMat, signBackMat, signBackMat, signBackMat, faceMat, signBackMat]);
+      sign.userData.faceMat = faceMat;
+      sign.position.set(1.9, 1.9, 0);
       sign.castShadow = true;
       g.add(sPost, sign);
       g.position.set(x, 0, z);
       g.lookAt(0, 0, 0);
       scene.add(g);
-      treeCols.push({ x, z, r: 0.7 });
-      artTrees.push({ group: g, sign, post, read: !!isRead, x, z });
+      addBox(x, 0.45, z, 0.85, 0.45, 0.7);
+      chests.push({ group: g, lid, beam, loot, sign, post, read: !!isRead, x, z });
     });
   }
 
@@ -1109,7 +1456,7 @@ export function mount() {
       scene.add(m);
       coins.push(m);
     };
-    /* rings along the trail + arcs over mushrooms; courses add their own */
+    /* rings along the trail; arenas and drops add their own */
     for (let i = 0; i < 9; i++) {
       const a = hash01(`coin-ring${i}`) * Math.PI * 2;
       const r = 16 + hash01(`coin-r${i}`) * (HUB_R - 34);
@@ -1179,34 +1526,50 @@ export function mount() {
     coins.addCoin(-9, 13.4, -3);
   }
 
-  /* ----- warp pipes → seeded courses ----- */
+  /* ----- boss gates → arenas ----- */
 
-  const COURSE_NAMES = ['sprout climb', 'cloud steps', 'star summit'];
-  const pipes = [];
+  const BOSS_NAMES = ['Mossback', 'Old Knucklebark', 'the Hollow King'];
+  const gates = [];
   const stars = [];
   const gotStars = store.stars();
   {
-    const pipeMat = new THREE.MeshStandardMaterial({ color: 0x2e9e44, roughness: 0.4, metalness: 0.15 });
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8e9aa8, roughness: 0.8, flatShading: true });
+    const mossMat = new THREE.MeshStandardMaterial({ color: 0x4fae5e, roughness: 0.9, flatShading: true });
     for (let k = 0; k < 3; k++) {
       const a = -0.5 + k * 0.55;
       const x = Math.cos(a) * (HUB_R - 22);
       const z = Math.sin(a) * (HUB_R - 22);
       const g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 2.6, 18), pipeMat);
-      body.position.y = 1.3;
-      const lip = new THREE.Mesh(new THREE.CylinderGeometry(1.85, 1.85, 0.7, 18), pipeMat);
-      lip.position.y = 2.85;
-      body.castShadow = lip.castShadow = true;
-      g.add(body, lip);
+      /* a mossy stone arch */
+      const pillL = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(0.9, 4.2, 0.9, 2, 0.16), -2.1, 2.1, 0.55), stoneMat);
+      pillL.position.set(-1.7, 2.1, 0);
+      const pillR = pillL.clone();
+      pillR.position.x = 1.7;
+      const lintel = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(4.6, 0.9, 1.1, 2, 0.16), -0.45, 0.45, 0.6), stoneMat);
+      lintel.position.y = 4.45;
+      const mossL = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), mossMat);
+      mossL.position.set(-1.7, 4.1, 0.2);
+      mossL.scale.set(1, 0.5, 1);
+      const mossT = mossL.clone();
+      mossT.position.set(0.8, 4.9, 0);
+      pillL.castShadow = pillR.castShadow = lintel.castShadow = true;
+      /* the swirling dark between the pillars */
+      const veil = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.6, 3.6),
+        new THREE.MeshBasicMaterial({ color: 0x8a5cff, transparent: true, opacity: 0.6, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      veil.position.y = 2.1;
+      g.add(pillL, pillR, lintel, mossL, mossT, veil);
       g.position.set(x, 0, z);
+      g.lookAt(0, 0, 0);
       scene.add(g);
-      addBox(x, 1.6, z, 1.85, 1.6, 1.85);
-      pipes.push({ x, z, idx: k, done: gotStars.includes(k) });
+      addBox(x, 2.1, z, 1.2, 2.1, 1.2);
+      gates.push({ x, z, idx: k, veil, done: gotStars.includes(k) });
     }
   }
 
   /* baked contact shadows: a dark breath under everything standing on the
-     meadow — grounding the shadow map alone can't deliver at this size */
+     forest floor — grounding the shadow map alone can't deliver at this size */
   {
     const c = document.createElement('canvas');
     c.width = c.height = 1024;
@@ -1223,7 +1586,7 @@ export function mount() {
       ctx.arc(u, v, rr, 0, Math.PI * 2);
       ctx.fill();
     };
-    /* the trail: a sandy path tracing the article spiral */
+    /* the trail: a sandy path tracing the chest spiral */
     ctx.strokeStyle = 'rgba(196, 168, 118, 0.5)';
     ctx.lineWidth = (2.6 / HUB_R) * 0.5 * 1024 * 2;
     ctx.lineCap = 'round';
@@ -1237,9 +1600,11 @@ export function mount() {
       else ctx.lineTo(u, v);
     }
     ctx.stroke();
-    for (const t of treeCols) blot(t.x, t.z, t.r * 2.6, 0.34);
-    for (const p of pipes) blot(p.x, p.z, 3.6, 0.4);
+    /* the forest is dense now — light blots, or the floor goes night-dark */
+    for (const t of treeCols) blot(t.x, t.z, t.r * 2.2, 0.18);
+    for (const p of gates) blot(p.x, p.z, 3.6, 0.4);
     for (const s of shrooms) blot(s.x, s.z, 2.6, 0.34);
+    for (const cmp of CAMPS) blot(cmp.x, cmp.z, 5, 0.3);
     const tex = new THREE.CanvasTexture(c);
     const overlay = new THREE.Mesh(
       new THREE.CircleGeometry(HUB_R, 48),
@@ -1251,47 +1616,67 @@ export function mount() {
     scene.add(overlay);
   }
 
-  const courseSpots = []; // island positions — decorated after the build
-  /* a course: floating islands ascending to a star, offset far from the hub */
-  function buildCourse(k) {
-    const rnd = mulberry(hash32(`course-${k}`));
+  /* ----- boss arenas: forest clearings far past the fog ----- */
+
+  /* arena k: a flat ring clearing at ox = 700 + k*700, walled by giant trees */
+  const arenas = [];
+  function buildArena(k) {
+    const rnd = mulberry(hash32(`arena-${k}`));
     const ox = 700 + k * 700;
-    const island = (x, y, z, hx, hz) => {
-      const g = new THREE.Group();
-      const top = new THREE.Mesh(bakeVertexAO(new RoundedBoxGeometry(hx * 2, 0.7, hz * 2, 2, 0.2), -0.35, 0.35, 0.62), platMat);
-      const base = new THREE.Mesh(bakeVertexAO(new THREE.CylinderGeometry(Math.min(hx, hz) * 0.8, 0.3, 1.6, 8), -0.8, 0.8, 0.45), platSideMat);
-      base.position.y = -1.1;
-      top.castShadow = top.receiveShadow = true;
-      g.add(top, base);
-      g.position.set(x, y, z);
-      scene.add(g);
-      courseSpots.push({ x, y, z, hx });
-      return addBox(x, y, z, hx, 0.35, hz, { mesh: g });
-    };
-    /* start pad */
-    island(ox, 0, 0, 5, 5);
-    let px = ox;
-    let py = 0;
-    let pz = 0;
-    const n = 10 + k * 3;
-    for (let i = 0; i < n; i++) {
-      const da = (rnd() - 0.5) * 2.4;
-      const dist = 4.5 + rnd() * 2.5 + k;
-      px += Math.sin(da) * dist;
-      pz -= Math.cos(da) * dist;
-      py += 1.6 + rnd() * 1.2;
-      const hx = 1.5 + rnd() * 1.2;
-      if (rnd() < 0.25 + k * 0.12 && i > 1) {
-        /* a mover: ride it */
-        const axis = rnd() < 0.5 ? 'x' : 'y';
-        const b = island(px, py, pz, hx, hx);
-        b.mover = { axis, amp: 2 + rnd() * 2, speed: 0.6 + rnd() * 0.5, phase: rnd() * 6 };
-        movers.push(b);
-      } else island(px, py, pz, hx, hx);
-      if (rnd() < 0.6) coins.addCoin(px, py + 1.5, pz);
+    const R = 27;
+    const ground = new THREE.Mesh(
+      new THREE.CylinderGeometry(R, R + 5, 9, 48),
+      new THREE.MeshStandardMaterial({ map: meadowTexture(), roughness: 0.95 }),
+    );
+    ground.position.set(ox, -4.5, 0);
+    ground.receiveShadow = true;
+    scene.add(ground);
+    addBox(ox, -4.5, 0, R, 4.5, R, { round: R });
+    const under = new THREE.Mesh(
+      new THREE.CylinderGeometry(R + 5, R * 0.4, 30, 32),
+      new THREE.MeshStandardMaterial({ color: 0x7a5536, roughness: 1 }),
+    );
+    under.position.set(ox, -24, 0);
+    scene.add(under);
+
+    /* tree wall: a tight double ring of big trees */
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2;
+      const rr = R - 2.2 - (i % 2) * 2.4;
+      arenaTreeSpots.push({
+        x: ox + Math.cos(a) * rr,
+        z: Math.sin(a) * rr,
+        s: 1.9 + rnd() * 1.3,
+        seed: 1000 + k * 100 + i,
+      });
     }
-    /* summit + star */
-    island(px, py + 2, pz - 6, 3.4, 3.4);
+    /* a few rocks + coins inside */
+    for (let i = 0; i < 5; i++) {
+      const a = rnd() * Math.PI * 2;
+      const rr = 6 + rnd() * (R - 12);
+      coins.addCoin(ox + Math.cos(a) * rr, 1.1, Math.sin(a) * rr);
+    }
+
+    /* return gate at the south edge */
+    const back = new THREE.Group();
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8e9aa8, roughness: 0.8, flatShading: true });
+    const pillL = new THREE.Mesh(new RoundedBoxGeometry(0.7, 3.4, 0.7, 2, 0.14), stoneMat);
+    pillL.position.set(-1.3, 1.7, 0);
+    const pillR = pillL.clone();
+    pillR.position.x = 1.3;
+    const lintel = new THREE.Mesh(new RoundedBoxGeometry(3.6, 0.7, 0.9, 2, 0.14), stoneMat);
+    lintel.position.y = 3.6;
+    const veil = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.0, 2.9),
+      new THREE.MeshBasicMaterial({ color: 0x8a5cff, transparent: true, opacity: 0.6, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    veil.position.y = 1.7;
+    back.add(pillL, pillR, lintel, veil);
+    back.position.set(ox, 0, R - 5);
+    back.lookAt(ox, 0, 0);
+    scene.add(back);
+
+    /* the star, hidden until the boss falls */
     const starGeo = new THREE.OctahedronGeometry(1.0, 0);
     starGeo.scale(1, 1.35, 1);
     const star = new THREE.Mesh(
@@ -1304,319 +1689,667 @@ export function mount() {
         roughness: 0.3,
       }),
     );
-    star.position.set(px, py + 4.6, pz - 6);
+    star.position.set(ox, 3.4, 0);
     star.castShadow = true;
-    star.visible = !gotStars.includes(k);
+    star.visible = false;
     scene.add(star);
-    stars.push({ mesh: star, idx: k, x: px, y: py + 4.6, z: pz - 6 });
-    return { spawn: new THREE.Vector3(ox, 1.2, 0) };
+    stars.push({ mesh: star, idx: k, x: ox, y: 3.4, z: 0 });
+
+    const arena = {
+      idx: k,
+      ox,
+      R,
+      spawn: new THREE.Vector3(ox, 1.2, R - 9),
+      exit: { x: ox, z: R - 5 },
+      boss: null, // attached once assets land
+      adds: [],
+      cleared: gotStars.includes(k),
+    };
+    arenas.push(arena);
+    return arena;
   }
-  const courses = [buildCourse(0), buildCourse(1), buildCourse(2)];
+  buildArena(0);
+  buildArena(1);
+  buildArena(2);
+  plantForest(); // hub + arena walls in one InstancedMesh pair
 
-  /* course atmosphere: drifting rock shards around the islands + a flag
-     on every start pad */
-  {
-    const shardGeo = new THREE.DodecahedronGeometry(0.7, 0);
-    const shardMat = new THREE.MeshStandardMaterial({ color: 0xa8b8c4, roughness: 0.9, flatShading: true });
-    const N = Math.min(140, courseSpots.length * 2);
-    const shards = new THREE.InstancedMesh(shardGeo, shardMat, N);
-    const m4 = new THREE.Matrix4();
-    for (let i = 0; i < N; i++) {
-      const sp = courseSpots[i % courseSpots.length];
-      const a = hash01(`shard${i}`) * Math.PI * 2;
-      const d = sp.hx + 2.5 + hash01(`shardd${i}`) * 5;
-      const s = 0.35 + hash01(`shards${i}`) * 0.8;
-      m4.makeRotationY(hash01(`shardq${i}`) * Math.PI);
-      m4.scale(new THREE.Vector3(s, s, s));
-      m4.setPosition(
-        sp.x + Math.cos(a) * d,
-        sp.y - 1.5 - hash01(`shardy${i}`) * 4,
-        sp.z + Math.sin(a) * d,
-      );
-      shards.setMatrixAt(i, m4);
-    }
-    scene.add(shards);
+  /* ----- the player shell: physics moves the group, the GLB rides it ----- */
 
-    const flagPoleMat = new THREE.MeshStandardMaterial({ color: 0xe8dcc2, roughness: 0.6 });
-    for (let k = 0; k < courses.length; k++) {
-      const sp = courses[k].spawn;
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 4.2, 6), flagPoleMat);
-      pole.position.set(sp.x + 3, 2.1, sp.z - 2);
-      pole.castShadow = true;
-      const flag = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.5, 0.9),
-        new THREE.MeshStandardMaterial({
-          color: [0x58c46a, 0x4aa8e0, 0xf0b432][k],
-          side: THREE.DoubleSide,
-          roughness: 0.7,
-        }),
-      );
-      flag.position.set(sp.x + 3.75, 3.7, sp.z - 2);
-      scene.add(pole, flag);
-    }
-  }
-
-  /* ----- the player: a cel-shaded sprout adventurer -----
-     Genshin grammar on a chibi frame: 3-band toon shading, ink outlines
-     (inverted hulls riding each limb group), an unlit anime face that
-     blinks, chunky hair silhouette, and a follow-the-leader scarf. The
-     sprout stays — it's the character, and its leaves still grow with
-     the read count. */
-
-  /* shared 3-step ramp: hard terminator, Genshin-style */
-  const toneRamp = new THREE.DataTexture(new Uint8Array([95, 170, 255]), 3, 1, THREE.RedFormat);
-  toneRamp.minFilter = toneRamp.magFilter = THREE.NearestFilter;
-  toneRamp.needsUpdate = true;
-  signal.addEventListener('abort', () => toneRamp.dispose());
-
-  const INK = 0x223326;
-
-  function makePlayer() {
-    const toon = (color) => new THREE.MeshToonMaterial({ color, gradientMap: toneRamp });
-    const inkM = new THREE.MeshBasicMaterial({ color: INK, side: THREE.BackSide });
-    /* inverted-hull outline that rides the same group as its mesh */
-    const outline = (mesh, fat = 1.05) => {
-      const o = new THREE.Mesh(mesh.geometry, inkM);
-      o.position.copy(mesh.position);
-      o.rotation.copy(mesh.rotation);
-      o.scale.copy(mesh.scale).multiplyScalar(fat);
-      o.userData.outline = true;
-      mesh.parent.add(o);
-    };
-
-    const skinM = toon(0xffe3c8);
-    const hairM = toon(0xeead3e);
-    const tunicM = toon(0x4fbb66);
-    const pineM = toon(0x2c6e48);
-    const bootM = toon(0x8a5a33);
-    const creamM = toon(0xfff1d6);
-    creamM.side = THREE.DoubleSide;
-
-    const p = new THREE.Group();
-    const body = new THREE.Group();
-
-    /* torso: tunic with a flared hem and a gold belt */
-    const torso = new THREE.Group();
-    torso.position.y = 0.62;
-    const tunic = new THREE.Mesh(new RoundedBoxGeometry(0.5, 0.46, 0.38, 3, 0.12), tunicM);
-    tunic.position.y = 0.26;
-    const hem = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.3, 14), tunicM);
-    hem.position.y = 0.06;
-    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.29, 0.07, 14), toon(GOLD));
-    belt.position.y = 0.13;
-    torso.add(tunic, hem, belt);
-    outline(tunic);
-    outline(hem);
-
-    /* legs: pivot at the hip so they swing */
-    const mkLeg = (sx) => {
-      const g = new THREE.Group();
-      g.position.set(sx, 0.42, 0);
-      const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.2, 4, 10), pineM);
-      shin.position.y = -0.16;
-      const boot = new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.13, 0.27, 2, 0.05), bootM);
-      boot.position.set(0, -0.32, 0.04);
-      g.add(shin, boot);
-      outline(shin, 1.08);
-      outline(boot, 1.08);
-      body.add(g);
-      return g;
-    };
-    const legL = mkLeg(-0.14);
-    const legR = mkLeg(0.14);
-
-    /* arms: pivot at the shoulder, mitten hands */
-    const mkArm = (sx) => {
-      const g = new THREE.Group();
-      g.position.set(sx, 1.0, 0);
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.2, 4, 10), tunicM);
-      arm.position.y = -0.14;
-      const mitt = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), skinM);
-      mitt.position.y = -0.3;
-      g.add(arm, mitt);
-      outline(arm, 1.08);
-      outline(mitt, 1.08);
-      body.add(g);
-      return g;
-    };
-    const armL = mkArm(-0.31);
-    const armR = mkArm(0.31);
-
-    /* head: big sphere, anime face patch, chunky hair, ahoge, the sprout */
-    const head = new THREE.Group();
-    head.position.y = 1.08;
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 18), skinM);
-    skull.position.y = 0.24;
-    head.add(skull);
-    outline(skull, 1.045);
-
-    /* hair: crown + swept fringe + side bangs, merged to one draw */
-    {
-      const parts = [];
-      /* crown stops at the hairline in front (the face must show), but
-         wraps down to the nape in back — +z is the front half (φ 0..π) */
-      const crownF = new THREE.SphereGeometry(0.37, 20, 12, 0, Math.PI, 0, 1.12);
-      crownF.translate(0, 0.27, -0.02);
-      parts.push(crownF);
-      const crownB = new THREE.SphereGeometry(0.37, 20, 14, Math.PI, Math.PI, 0, 2.1);
-      crownB.translate(0, 0.27, -0.02);
-      parts.push(crownB);
-      for (let i = 0; i < 5; i++) {
-        const a = (i / 4 - 0.5) * 1.5;
-        /* swept fringe on the hairline — must not curtain the eyes */
-        const tuft = new THREE.SphereGeometry(0.105, 8, 6);
-        tuft.scale(1, 1.25, 0.85);
-        tuft.rotateX(0.3 + (i % 2) * 0.15);
-        tuft.translate(Math.sin(a) * 0.28, 0.46, Math.cos(a) * 0.28);
-        parts.push(tuft);
-      }
-      for (const sx of [-1, 1]) {
-        /* side bangs frame the face beside the ears, never across it */
-        const bang = new THREE.SphereGeometry(0.09, 8, 6);
-        bang.scale(0.8, 2.2, 0.9);
-        bang.translate(sx * 0.33, 0.08, -0.01);
-        parts.push(bang);
-      }
-      const hairGeo = mergeGeometries(parts);
-      const hair = new THREE.Mesh(hairGeo, hairM);
-      head.add(hair);
-      outline(hair, 1.045);
-    }
-
-    /* ahoge — the one rebellious strand; it sways in idle */
-    const ahoge = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.26, 6), hairM);
-    ahoge.position.set(0.05, 0.66, -0.02);
-    ahoge.rotation.z = -0.35;
-    head.add(ahoge);
-
-    /* the sprout, now a hair ornament — leaves still track read count */
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.22, 6), pineM);
-    stem.position.set(-0.1, 0.66, 0);
-    stem.rotation.z = 0.25;
-    head.add(stem);
-    const leafG = new THREE.SphereGeometry(0.13, 6, 5);
-    leafG.scale(1.6, 0.5, 0.8);
-    const leafM = toon(0x7adf8a);
-    const leaves = Math.min(4, 1 + Math.floor(read.size / 3));
-    for (let i = 0; i < leaves; i++) {
-      const leaf = new THREE.Mesh(leafG, leafM);
-      leaf.position.set(-0.13 + Math.cos((i / leaves) * Math.PI * 2) * 0.09, 0.78, Math.sin((i / leaves) * Math.PI * 2) * 0.09);
-      leaf.rotation.y = (i / leaves) * Math.PI * 2;
-      leaf.rotation.z = 0.5;
-      head.add(leaf);
-    }
-
-    /* face: unlit canvas ink on a curved patch hugging the skull — Genshin
-       faces don't take the light bands, they stay drawn */
-    const faceC = document.createElement('canvas');
-    faceC.width = faceC.height = 256;
-    const faceTex = new THREE.CanvasTexture(faceC);
-    faceTex.colorSpace = THREE.SRGBColorSpace;
-    const drawFace = (open) => {
-      const x = faceC.getContext('2d');
-      x.clearRect(0, 0, 256, 256);
-      x.lineCap = 'round';
-      for (const ex of [78, 178]) {
-        if (open) {
-          /* big iris with a falling gradient + twin highlights */
-          x.fillStyle = '#2a2620';
-          x.beginPath();
-          x.ellipse(ex, 110, 33, 43, 0, 0, Math.PI * 2);
-          x.fill();
-          const g = x.createLinearGradient(0, 75, 0, 150);
-          g.addColorStop(0, '#3f8f5a');
-          g.addColorStop(1, '#a9f0bd');
-          x.fillStyle = g;
-          x.beginPath();
-          x.ellipse(ex, 115, 25, 34, 0, 0, Math.PI * 2);
-          x.fill();
-          x.fillStyle = '#2a2620';
-          x.beginPath();
-          x.ellipse(ex, 116, 10, 15, 0, 0, Math.PI * 2);
-          x.fill();
-          x.fillStyle = '#fff';
-          x.beginPath();
-          x.ellipse(ex - 10, 94, 9, 12, -0.3, 0, Math.PI * 2);
-          x.fill();
-          x.beginPath();
-          x.ellipse(ex + 12, 132, 4.5, 6, 0, 0, Math.PI * 2);
-          x.fill();
-        } else {
-          x.strokeStyle = '#2a2620';
-          x.lineWidth = 8;
-          x.beginPath();
-          x.moveTo(ex - 28, 112);
-          x.quadraticCurveTo(ex, 130, ex + 28, 112);
-          x.stroke();
-        }
-        /* brow */
-        x.strokeStyle = '#b5772e';
-        x.lineWidth = 9;
-        x.beginPath();
-        x.moveTo(ex - 26, 54);
-        x.quadraticCurveTo(ex, 42, ex + 26, 52);
-        x.stroke();
-        /* blush */
-        x.fillStyle = 'rgba(255,138,118,0.35)';
-        x.beginPath();
-        x.ellipse(ex, 168, 17, 9, 0, 0, Math.PI * 2);
-        x.fill();
-      }
-      /* small open smile */
-      x.fillStyle = '#2a2620';
-      x.beginPath();
-      x.moveTo(108, 182);
-      x.quadraticCurveTo(128, 204, 148, 182);
-      x.quadraticCurveTo(128, 191, 108, 182);
-      x.fill();
-      faceTex.needsUpdate = true;
-    };
-    drawFace(true);
-    const facePatch = new THREE.Mesh(
-      /* low on the skull, chibi-style: big forehead under the fringe */
-      new THREE.SphereGeometry(0.348, 24, 18, Math.PI / 2 - 0.72, 1.44, Math.PI / 2 - 0.28, 1.0),
-      new THREE.MeshBasicMaterial({ map: faceTex, transparent: true }),
-    );
-    facePatch.position.y = 0.24;
-    head.add(facePatch);
-    body.add(torso, head);
-
-    /* scarf: follow-the-leader chain rooted at the neck */
-    const scarfSegs = [];
-    const scarfPts = [];
-    const SEG = 0.15;
-    for (let i = 0; i < 6; i++) {
-      const w = 0.2 - i * 0.018;
-      const seg = new THREE.Mesh(new THREE.BoxGeometry(w, 0.025, SEG), creamM);
-      seg.castShadow = true;
-      p.add(seg);
-      scarfSegs.push(seg);
-      scarfPts.push(new THREE.Vector3(0, 1.0 - i * SEG, -0.2));
-    }
-    scarfPts.push(new THREE.Vector3(0, 1.0 - 6 * SEG, -0.2)); /* 7 pts → 6 segments */
-
-    body.traverse((o) => {
-      if (o.isMesh && !o.userData.outline) o.castShadow = true;
-    });
-    facePatch.castShadow = false;
-
-    /* soft blob shadow helper for height reading */
-    const blobShadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.55, 18),
-      new THREE.MeshBasicMaterial({ color: 0x1a3a20, transparent: true, opacity: 0.25, depthWrite: false }),
-    );
-    blobShadow.rotation.x = -Math.PI / 2;
-    p.add(body, blobShadow);
-    p.userData = { body, blobShadow, rig: { head, torso, armL, armR, legL, legR, ahoge, scarfSegs, scarfPts, drawFace } };
-    return p;
-  }
-  const player = makePlayer();
+  const player = new THREE.Group();
+  const body = new THREE.Group();
+  player.add(body);
+  /* placeholder until the GLB lands (and fallback if it never does) */
+  const placeholder = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.34, 0.9, 4, 10),
+    new THREE.MeshToonMaterial({ color: 0x4fbb66, gradientMap: toneRamp }),
+  );
+  placeholder.position.y = 0.85;
+  placeholder.castShadow = true;
+  body.add(placeholder);
+  const blobShadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.55, 18),
+    new THREE.MeshBasicMaterial({ color: 0x1a3a20, transparent: true, opacity: 0.25, depthWrite: false }),
+  );
+  blobShadow.rotation.x = -Math.PI / 2;
+  player.add(blobShadow);
   scene.add(player);
-  /* face blink state + run-cycle phase live outside the rig */
-  let blinkT = 2.5;
-  let eyesOpen = true;
-  let runPhase = 0;
-  const scarfV = new THREE.Vector3();
+
+  let heroAnim = null; // animator once the GLB lands
+  let assetsReady = false;
+
+  /* ----- combat state ----- */
+
+  const ATK_STEPS = [
+    { clip: 'atk1', dur: 0.5, hitAt: 0.42, dmg: 1, range: 2.7, rage: 8 },
+    { clip: 'atk2', dur: 0.5, hitAt: 0.42, dmg: 1, range: 2.7, rage: 8 },
+    { clip: 'atk3', dur: 0.78, hitAt: 0.52, dmg: 2, range: 3.0, rage: 14 },
+  ];
+  const SKILL_DUR = 1.15;
+  const SKILL_CD = 6;
+  const ULT_DUR = 1.7;
+
+  const combat = {
+    hp: 100,
+    maxHp: 100,
+    rage: 0,
+    iframes: 0,
+    sinceHurt: 99,
+    chain: 0,
+    atkT: 0,
+    atkDur: 0,
+    atkStep: null,
+    atkHitDone: false,
+    queued: false,
+    chainGrace: 0,
+    blocking: false,
+    skillCd: 0,
+    skillT: 0,
+    skillHitDone: false,
+    ultT: 0,
+    ultHitDone: false,
+    chargeHits: new Set(),
+  };
+  const busy = () => combat.atkT > 0 || combat.skillT > 0 || combat.ultT > 0;
+  const dmgMul = () => (powerOn('berserk') ? 1.35 : 1);
+
+  let shake = 0;
+  let hurtFlash = 0;
+
+  /* damage pops: DOM chips projected from world space each frame. NOT
+     sprites — the GTAO pre-pass renders sprites as opaque quads into its
+     G-buffer (it only hides Points/Lines), which composites a solid black
+     rectangle wherever a number should float */
+  const pops = [];
+  const popV = new THREE.Vector3();
+  function popDamage(x, y, z, txt, color = '#ffe9a0') {
+    if (!hud) return;
+    const el = document.createElement('div');
+    el.className = 'cp-pop';
+    el.textContent = txt;
+    el.style.color = color;
+    hud.append(el);
+    pops.push({ el, x, y, z, life: 0.8 });
+    if (pops.length > 14) {
+      pops[0].el.remove();
+      pops.shift();
+    }
+  }
+
+  /* shockwave rings (ult + boss slam) */
+  const rings = [];
+  {
+    const ringGeo = new THREE.TorusGeometry(1, 0.16, 6, 40);
+    ringGeo.rotateX(Math.PI / 2);
+    for (let i = 0; i < 4; i++) {
+      const m = new THREE.Mesh(
+        ringGeo,
+        new THREE.MeshBasicMaterial({ color: 0xffd766, transparent: true, opacity: 0, depthWrite: false }),
+      );
+      m.visible = false;
+      scene.add(m);
+      rings.push({ m, r: 0, maxR: 0, speed: 0, life: 0, lethal: false, x: 0, z: 0, hit: true });
+    }
+  }
+  function ringAt(x, y, z, { maxR = 8, speed = 11, color = 0xffd766, lethal = false } = {}) {
+    const rg = rings.find((q) => q.life <= 0) ?? rings[0];
+    rg.m.material.color.set(color);
+    rg.m.position.set(x, y, z);
+    rg.r = 1.2;
+    rg.maxR = maxR;
+    rg.speed = speed;
+    rg.life = 1;
+    rg.lethal = lethal;
+    rg.hit = false;
+    rg.x = x;
+    rg.z = z;
+    rg.m.visible = true;
+  }
+
+  /* ----- foes: gremlins and ogres, cloned from the Meshy rigs ----- */
+
+  const foes = [];
+
+  function makeFoe(kind, asset, opts) {
+    const model = cloneSkinned(asset.scene);
+    /* every foe needs its own materials for the hit flash */
+    model.traverse((o) => {
+      if (o.isMesh || o.isSkinnedMesh) o.material = o.material.clone();
+    });
+    const group = new THREE.Group();
+    group.add(model);
+    normalizeHeight(model, opts.height);
+    const anim = makeAnimator(model, asset.clips);
+    group.position.set(opts.x, opts.y ?? 0, opts.z);
+    scene.add(group);
+    const foe = {
+      kind,
+      group,
+      model,
+      anim,
+      hp: opts.hp,
+      maxHp: opts.hp,
+      radius: opts.radius,
+      dmg: opts.dmg,
+      speed: opts.speed,
+      zone: opts.zone, // -1 hub, 0..2 arena idx
+      home: { x: opts.x, z: opts.z },
+      state: 'idle',
+      t: 0,
+      cdT: 0,
+      slamT: opts.slamT ?? 0,
+      kx: 0,
+      kz: 0,
+      flashT: 0,
+      respawnT: 0,
+      respawns: opts.respawns ?? false,
+      boss: opts.boss ?? false,
+      enraged: false,
+      dead: false,
+    };
+    anim.play('idle');
+    foes.push(foe);
+    return foe;
+  }
+
+  function flashFoe(foe) {
+    foe.flashT = 0.12;
+    foe.model.traverse((o) => {
+      if (o.material?.emissive) o.material.emissive.set(0xb33a2e);
+    });
+  }
+  function unflashFoe(foe) {
+    foe.model.traverse((o) => {
+      if (o.material?.emissive) o.material.emissive.set(0x000000);
+    });
+  }
+
+  function killFoe(foe) {
+    foe.dead = true;
+    foe.state = 'dead';
+    foe.t = foe.boss ? 2.4 : 1.4;
+    const ts = foe.anim.duration('die');
+    foe.anim.play('die', { once: true, clamp: true, timeScale: ts / (foe.boss ? 2.2 : 1.2) });
+    const { x, z } = foe.group.position;
+    const y = foe.group.position.y;
+    puffAt(x, y + 0.8, z, 0xf2c4be, foe.boss ? 2.2 : 1.2, 0.7);
+    const drops = foe.boss ? 10 : 3;
+    for (let i = 0; i < drops; i++) {
+      const a = (i / drops) * Math.PI * 2;
+      coins.addCoin(x + Math.cos(a) * (1 + (i % 2)), 1.1, z + Math.sin(a) * (1 + ((i + 1) % 2)));
+    }
+    if (foe.respawns) foe.respawnT = 26;
+    if (foe.boss) onBossDown(foe);
+  }
+
+  function damageFoe(foe, dmg, fromX, fromZ, popColor) {
+    if (foe.dead || foe.state === 'dormant') return;
+    const dealt = Math.round(dmg * dmgMul());
+    foe.hp -= dealt;
+    flashFoe(foe);
+    const dx = foe.group.position.x - fromX;
+    const dz = foe.group.position.z - fromZ;
+    const d = Math.hypot(dx, dz) || 1;
+    const kb = foe.boss ? 1.2 : 7;
+    foe.kx += (dx / d) * kb;
+    foe.kz += (dz / d) * kb;
+    combat.rage = Math.min(100, combat.rage + (foe.boss ? 10 : 8));
+    popDamage(foe.group.position.x, foe.group.position.y + (foe.boss ? 3.6 : 1.4), foe.group.position.z, String(dealt), popColor);
+    puffAt(foe.group.position.x, foe.group.position.y + 1, foe.group.position.z, 0xffd1b8, 0.8, 0.5);
+    audio.hit();
+    if (foe.hp <= 0) killFoe(foe);
+    else if (!foe.boss && foe.state !== 'dead') {
+      /* gremlins stagger; ogres power through */
+      foe.state = 'hit';
+      foe.t = 0.32;
+      const ts = foe.anim.duration('hit');
+      foe.anim.play('hit', { once: true, timeScale: ts / 0.32 });
+    }
+  }
+
+  function damagePlayer(dmg, fromX, fromZ) {
+    if (combat.iframes > 0 || !assetsReady) return;
+    /* hold-to-block eats frontal hits, TERA-style */
+    const toFoe = Math.atan2(fromX - player.position.x, fromZ - player.position.z);
+    let dAng = toFoe - facing;
+    while (dAng > Math.PI) dAng -= Math.PI * 2;
+    while (dAng < -Math.PI) dAng += Math.PI * 2;
+    if (combat.blocking && Math.abs(dAng) < 1.25) {
+      audio.block();
+      combat.rage = Math.min(100, combat.rage + 6);
+      puffAt(player.position.x + Math.sin(facing) * 0.6, player.position.y + 1.1, player.position.z + Math.cos(facing) * 0.6, 0xc8e6ff, 0.7, 0.4);
+      popDamage(player.position.x, player.position.y + 2, player.position.z, 'block', '#9adcf0');
+      return;
+    }
+    combat.hp = Math.max(0, combat.hp - dmg);
+    combat.iframes = 0.9;
+    combat.sinceHurt = 0;
+    hurtFlash = 1;
+    shake = Math.min(0.5, shake + 0.25);
+    audio.hurt();
+    const dx = player.position.x - fromX;
+    const dz = player.position.z - fromZ;
+    const d = Math.hypot(dx, dz) || 1;
+    vel.x += (dx / d) * 9;
+    vel.z += (dz / d) * 9;
+    squash = 0.5;
+    popDamage(player.position.x, player.position.y + 2.2, player.position.z, String(dmg), '#ff9a8a');
+    syncVitals();
+    if (combat.hp <= 0) defeat();
+  }
+
+  function defeat() {
+    hud?.toast('☠ knocked out — back on your feet', 'gold');
+    combat.hp = combat.maxHp;
+    combat.rage = 0;
+    combat.iframes = 2;
+    respawn();
+    /* hub gremlins lose interest */
+    for (const f of foes) {
+      if (f.dead || f.boss) continue;
+      f.state = 'idle';
+      f.group.position.set(f.home.x, 0, f.home.z);
+      f.anim.play('idle');
+    }
+    syncVitals();
+  }
+
+  /* melee arc vs all live foes in the player's zone */
+  function meleeHit(range, arc, dmg, popColor) {
+    const px = player.position.x;
+    const pz = player.position.z;
+    let landed = false;
+    for (const foe of foes) {
+      if (foe.dead || foe.zone !== inCourse) continue;
+      const dx = foe.group.position.x - px;
+      const dz = foe.group.position.z - pz;
+      const d = Math.hypot(dx, dz);
+      if (d > range + foe.radius) continue;
+      if (arc < Math.PI) {
+        let dAng = Math.atan2(dx, dz) - facing;
+        while (dAng > Math.PI) dAng -= Math.PI * 2;
+        while (dAng < -Math.PI) dAng += Math.PI * 2;
+        if (Math.abs(dAng) > arc) continue;
+      }
+      damageFoe(foe, dmg, px, pz, popColor);
+      landed = true;
+    }
+    return landed;
+  }
+
+  /* ----- ability triggers (wired to input below) ----- */
+
+  function attackPress() {
+    if (!assetsReady || combat.skillT > 0 || combat.ultT > 0) return;
+    combat.blocking = false;
+    if (combat.atkT > 0) {
+      if (combat.atkT > combat.atkDur * 0.4) combat.queued = true;
+      return;
+    }
+    startAttack(combat.chainGrace > 0 ? combat.chain : 0);
+  }
+
+  function startAttack(step) {
+    const s = ATK_STEPS[step];
+    combat.chain = step;
+    combat.atkStep = s;
+    combat.atkDur = s.dur / (powerOn('berserk') ? 1.12 : 1);
+    combat.atkT = 0.0001;
+    combat.atkHitDone = false;
+    combat.queued = false;
+    combat.chainGrace = 0;
+    audio.swing();
+    if (heroAnim) {
+      const ts = heroAnim.duration(s.clip) / combat.atkDur;
+      heroAnim.play(s.clip, { once: true, fade: 0.08, timeScale: ts });
+    }
+  }
+
+  function skillPress() {
+    if (!assetsReady || !powerOn('skill') || combat.skillCd > 0 || busy()) return;
+    combat.blocking = false;
+    combat.skillT = 0.0001;
+    combat.skillHitDone = false;
+    combat.skillCd = SKILL_CD;
+    audio.skillWhirl();
+    if (heroAnim) {
+      const ts = heroAnim.duration('skill') / SKILL_DUR;
+      heroAnim.play('skill', { once: true, fade: 0.08, timeScale: ts });
+    }
+  }
+
+  function ultPress() {
+    if (!assetsReady || !powerOn('ult') || combat.rage < 100 || busy()) return;
+    combat.blocking = false;
+    combat.ultT = 0.0001;
+    combat.ultHitDone = false;
+    combat.rage = 0;
+    if (heroAnim) {
+      const ts = heroAnim.duration('ult') / ULT_DUR;
+      heroAnim.play('ult', { once: true, fade: 0.08, timeScale: ts });
+    }
+    syncVitals();
+  }
+
+  /* ----- boss orchestration ----- */
+
+  function onBossDown(foe) {
+    const arena = arenas[foe.zone];
+    if (!arena) return;
+    arena.cleared = true;
+    audio.roar();
+    shake = 0.6;
+    hud?.toast(`☠ ${BOSS_NAMES[foe.zone]} has fallen!`, 'gold');
+    const st = stars.find((s) => s.idx === foe.zone);
+    if (st) st.mesh.visible = true;
+    if (hud?.els) hud.els.course.textContent = `★ claim the star`;
+    /* the adds give up */
+    for (const f of foes) {
+      if (f.zone === foe.zone && !f.boss && !f.dead) killFoe(f);
+    }
+  }
+
+  function spawnFoes(assets) {
+    /* hub camps: small packs that respawn */
+    for (const cmp of CAMPS) {
+      const n = 2 + (cmp.idx % 2);
+      for (let i = 0; i < n; i++) {
+        const a = hash01(`grm${cmp.idx}:${i}`) * Math.PI * 2;
+        makeFoe('minion', assets.minion, {
+          x: cmp.x + Math.cos(a) * 3.2,
+          z: cmp.z + Math.sin(a) * 3.2,
+          height: 1.0,
+          hp: 3,
+          dmg: 8,
+          speed: 4.4,
+          radius: 0.5,
+          zone: -1,
+          respawns: true,
+        });
+      }
+    }
+    /* arenas: a boss + adds, skipped once cleared */
+    for (const arena of arenas) {
+      if (arena.cleared) continue;
+      const boss = makeFoe('boss', assets.boss, {
+        x: arena.ox,
+        z: -6,
+        height: 3.4 + arena.idx * 0.5,
+        hp: 60 + arena.idx * 30,
+        dmg: 16 + arena.idx * 4,
+        speed: 3.1 + arena.idx * 0.4,
+        radius: 1.9,
+        zone: arena.idx,
+        boss: true,
+        slamT: 7,
+      });
+      boss.state = 'dormant';
+      arena.boss = boss;
+      for (let i = 0; i < 2 + arena.idx; i++) {
+        const a = (i / (2 + arena.idx)) * Math.PI * 2 + 0.7;
+        arena.adds.push(
+          makeFoe('minion', assets.minion, {
+            x: arena.ox + Math.cos(a) * 9,
+            z: Math.sin(a) * 9,
+            height: 1.0,
+            hp: 3,
+            dmg: 8,
+            speed: 4.8,
+            radius: 0.5,
+            zone: arena.idx,
+          }),
+        );
+      }
+    }
+  }
+
+  function updateFoe(foe, dt) {
+    if (foe.flashT > 0) {
+      foe.flashT -= dt;
+      if (foe.flashT <= 0) unflashFoe(foe);
+    }
+    if (foe.dead) {
+      foe.t -= dt;
+      if (foe.t <= 0 && foe.group.visible) {
+        foe.group.position.y -= dt * 1.4;
+        if (foe.group.position.y < -2.4) foe.group.visible = false;
+      }
+      if (foe.respawns && (foe.respawnT -= dt) <= 0) {
+        foe.dead = false;
+        foe.hp = foe.maxHp;
+        foe.state = 'idle';
+        foe.group.visible = true;
+        foe.group.position.set(foe.home.x, 0, foe.home.z);
+        foe.anim.play('idle');
+        puffAt(foe.home.x, 1, foe.home.z, 0xcdf2d2, 1, 0.6);
+      }
+      foe.anim.mixer.update(dt);
+      return;
+    }
+
+    /* knockback decay */
+    if (Math.abs(foe.kx) + Math.abs(foe.kz) > 0.01) {
+      foe.group.position.x += foe.kx * dt;
+      foe.group.position.z += foe.kz * dt;
+      foe.kx *= Math.exp(-dt * 7);
+      foe.kz *= Math.exp(-dt * 7);
+    }
+
+    const samezone = foe.zone === inCourse;
+    const px = player.position.x;
+    const pz = player.position.z;
+    const dx = px - foe.group.position.x;
+    const dz = pz - foe.group.position.z;
+    const dist = Math.hypot(dx, dz);
+
+    if (foe.boss) {
+      updateBoss(foe, dt, dist, dx, dz, samezone);
+      foe.anim.mixer.update(dt);
+      return;
+    }
+
+    if (!samezone) {
+      if (foe.state !== 'idle') {
+        foe.state = 'idle';
+        foe.group.position.set(foe.home.x, 0, foe.home.z);
+        foe.anim.play('idle');
+      }
+      foe.anim.mixer.update(dt);
+      return;
+    }
+
+    foe.cdT = Math.max(0, foe.cdT - dt);
+    switch (foe.state) {
+      case 'idle': {
+        foe.anim.play('idle');
+        if (dist < 9) {
+          foe.state = 'chase';
+          audio.gremlin();
+          puffAt(foe.group.position.x, foe.group.position.y + 1.4, foe.group.position.z, 0xffe9a0, 0.5, 0.9);
+        }
+        break;
+      }
+      case 'chase': {
+        const homeD = Math.hypot(foe.group.position.x - foe.home.x, foe.group.position.z - foe.home.z);
+        if (dist > 13 || homeD > 26) {
+          foe.state = 'idle';
+          foe.hp = foe.maxHp;
+          break;
+        }
+        foe.anim.play(dist > 5 ? 'run' : 'walk');
+        const sp = foe.speed * (dist > 5 ? 1.25 : 1);
+        foe.group.position.x += (dx / dist) * sp * dt;
+        foe.group.position.z += (dz / dist) * sp * dt;
+        foe.group.rotation.y = Math.atan2(dx, dz);
+        /* don't pile into packmates */
+        for (const other of foes) {
+          if (other === foe || other.dead || other.zone !== foe.zone) continue;
+          const sx = foe.group.position.x - other.group.position.x;
+          const sz = foe.group.position.z - other.group.position.z;
+          const sd = Math.hypot(sx, sz);
+          if (sd > 1e-4 && sd < 1.1) {
+            foe.group.position.x += (sx / sd) * (1.1 - sd) * 0.5;
+            foe.group.position.z += (sz / sd) * (1.1 - sd) * 0.5;
+          }
+        }
+        if (dist < 2.0 && foe.cdT <= 0) {
+          foe.state = 'attack';
+          foe.t = 0;
+          const ts = foe.anim.duration('atk');
+          foe.anim.play('atk', { once: true, fade: 0.08, timeScale: ts / 0.7 });
+        }
+        break;
+      }
+      case 'attack': {
+        foe.t += dt;
+        foe.group.rotation.y = Math.atan2(dx, dz);
+        if (foe.t > 0.42 && foe.t - dt <= 0.42 && dist < 2.6) damagePlayer(foe.dmg, foe.group.position.x, foe.group.position.z);
+        if (foe.t > 0.7) {
+          foe.state = 'chase';
+          foe.cdT = 0.9;
+        }
+        break;
+      }
+      case 'hit': {
+        foe.t -= dt;
+        if (foe.t <= 0) foe.state = 'chase';
+        break;
+      }
+    }
+    foe.anim.mixer.update(dt);
+  }
+
+  function updateBoss(foe, dt, dist, dx, dz, samezone) {
+    const arena = arenas[foe.zone];
+    if (!samezone) {
+      if (foe.state !== 'dormant') {
+        /* player fled — the ogre stomps home and shakes it off */
+        foe.state = 'dormant';
+        foe.group.position.set(arena.ox, 0, -6);
+        foe.anim.play('idle');
+        if (hud?.els) hud.els.bossbar.hidden = true;
+      }
+      return;
+    }
+    const ts = foe.enraged ? 1.2 : 1;
+    switch (foe.state) {
+      case 'dormant': {
+        foe.anim.play('idle');
+        if (dist < 20) {
+          foe.state = 'taunt';
+          foe.t = 2.2;
+          const d = foe.anim.duration('taunt');
+          foe.anim.play('taunt', { once: true, timeScale: d / 2.2 });
+          audio.roar();
+          shake = Math.min(0.5, shake + 0.35);
+          if (hud?.els) {
+            hud.els.bossbar.hidden = false;
+            hud.els.bossname.textContent = BOSS_NAMES[foe.zone];
+            hud.els.bosshp.style.width = '100%';
+          }
+        }
+        break;
+      }
+      case 'taunt': {
+        foe.t -= dt;
+        foe.group.rotation.y = Math.atan2(dx, dz);
+        if (foe.t <= 0) foe.state = 'chase';
+        break;
+      }
+      case 'chase': {
+        foe.slamT -= dt;
+        foe.group.rotation.y = Math.atan2(dx, dz);
+        if (foe.slamT <= 0) {
+          foe.state = 'slam';
+          foe.t = 0;
+          const d = foe.anim.duration('slam');
+          foe.anim.play('slam', { once: true, timeScale: (d / 1.7) * ts });
+          break;
+        }
+        if (dist < 4.6) {
+          foe.state = 'swing';
+          foe.t = 0;
+          const d = foe.anim.duration('swing');
+          foe.anim.play('swing', { once: true, timeScale: (d / 1.15) * ts });
+          break;
+        }
+        foe.anim.play('walk');
+        const sp = foe.speed * ts;
+        foe.group.position.x += (dx / dist) * sp * dt;
+        foe.group.position.z += (dz / dist) * sp * dt;
+        /* stay in the arena */
+        const ax = foe.group.position.x - arena.ox;
+        const az = foe.group.position.z;
+        const ad = Math.hypot(ax, az);
+        if (ad > arena.R - 4) {
+          foe.group.position.x = arena.ox + (ax / ad) * (arena.R - 4);
+          foe.group.position.z = (az / ad) * (arena.R - 4);
+        }
+        break;
+      }
+      case 'swing': {
+        foe.t += dt;
+        const hitMoment = 0.55 / ts;
+        if (foe.t > hitMoment && foe.t - dt <= hitMoment && dist < 6) {
+          let dAng = Math.atan2(dx, dz) - foe.group.rotation.y;
+          while (dAng > Math.PI) dAng -= Math.PI * 2;
+          while (dAng < -Math.PI) dAng += Math.PI * 2;
+          if (Math.abs(dAng) < 1.2) damagePlayer(foe.dmg, foe.group.position.x, foe.group.position.z);
+        }
+        if (foe.t > 1.15 / ts) {
+          foe.state = 'chase';
+        }
+        break;
+      }
+      case 'slam': {
+        foe.t += dt;
+        const impact = 0.95 / ts;
+        if (foe.t > impact && foe.t - dt <= impact) {
+          ringAt(foe.group.position.x, 0.4, foe.group.position.z, {
+            maxR: 17,
+            speed: 10,
+            color: 0xb33a2e,
+            lethal: true,
+          });
+          shake = Math.min(0.6, shake + 0.4);
+          audio.ultBoom();
+          puffAt(foe.group.position.x, 0.6, foe.group.position.z, 0xd9c8a8, 2.4, 1);
+        }
+        if (foe.t > 1.7 / ts) {
+          foe.state = 'chase';
+          foe.slamT = (foe.enraged ? 6.5 : 10) + hash01(`slam${foe.zone}${Date.now() % 997}`) * 3;
+        }
+        break;
+      }
+    }
+    if (!foe.enraged && foe.hp <= foe.maxHp * 0.5) {
+      foe.enraged = true;
+      audio.roar();
+      hud?.toast(`${BOSS_NAMES[foe.zone]} is enraged!`);
+    }
+    if (hud?.els && !hud.els.bossbar.hidden) {
+      hud.els.bosshp.style.width = `${Math.max(0, (foe.hp / foe.maxHp) * 100)}%`;
+    }
+  }
 
   /* ----- state ----- */
 
@@ -1628,17 +2361,16 @@ export function mount() {
   let usedDouble = false;
   let dashT = 0;
   let dashCd = 0;
-  let gliding = false;
   let facing = 0;
   let squash = 0;
-  let inCourse = -1; // -1 = hub
+  let inCourse = -1; // -1 = hub, 0..2 = arena idx
   let coinCount = store.coins();
   let camYaw = 0.6;
   let camPitch = 0.38;
   let camDist = 13;
-  const keys = { f: false, b: false, l: false, r: false, jump: false, dash: false };
-  let nearTree = -1;
-  let nearPipe = -1;
+  const keys = { f: false, b: false, l: false, r: false, jump: false, dash: false, block: false };
+  let nearChest = -1;
+  let nearGate = -1;
   let birdT = 4;
 
   const SPAWN = new THREE.Vector3(0, 1.2, 19);
@@ -1657,7 +2389,7 @@ export function mount() {
       try {
         atSlug = sessionStorage.getItem('canopy-at');
       } catch {}
-      const t = artTrees.find((a) => a.post.slug && a.post.slug === atSlug);
+      const t = chests.find((a) => a.post.slug && a.post.slug === atSlug);
       if (t) player.position.set(t.x * 0.92, 1.2, t.z * 0.92);
       else player.position.copy(SPAWN);
     }
@@ -1669,27 +2401,29 @@ export function mount() {
   }
 
   function respawn() {
-    const at = inCourse >= 0 ? courses[inCourse].spawn : SPAWN;
+    const at = inCourse >= 0 ? arenas[inCourse].spawn : SPAWN;
     player.position.copy(at);
     vel.set(0, 0, 0);
     audio.land();
-    hud?.toast('back on your feet');
   }
 
-  function warpTo(courseIdx) {
+  function warpTo(idx) {
     audio.warp();
-    if (courseIdx >= 0) {
-      inCourse = courseIdx;
-      player.position.copy(courses[courseIdx].spawn);
+    if (idx >= 0) {
+      inCourse = idx;
+      player.position.copy(arenas[idx].spawn);
       const el = hud?.els?.course;
       if (el) {
         el.hidden = false;
-        el.textContent = `★ ${COURSE_NAMES[courseIdx]} — reach the star`;
+        el.textContent = arenas[idx].cleared
+          ? `★ ${BOSS_NAMES[idx]} — already conquered`
+          : `☠ ${BOSS_NAMES[idx]} — fell the beast`;
       }
     } else {
       inCourse = -1;
       player.position.copy(SPAWN);
       if (hud?.els?.course) hud.els.course.hidden = true;
+      if (hud?.els?.bossbar) hud.els.bossbar.hidden = true;
     }
     vel.set(0, 0, 0);
     camYaw = facing + Math.PI;
@@ -1699,7 +2433,7 @@ export function mount() {
 
   const stick = { id: -1, x0: 0, y0: 0, x: 0, y: 0, live: false };
   const STICK_R = 52;
-  const drag = { id: -1, lx: 0, ly: 0 };
+  const drag = { id: -1, lx: 0, ly: 0, moved: 0 };
 
   function bindInput() {
     const el = renderer.domElement;
@@ -1719,11 +2453,19 @@ export function mount() {
     const overlay = hud?.querySelector('[data-cp-overlay]');
     let overlayGone = false;
     const dismissOverlay = () => {
-      if (overlayGone) return;
+      if (overlayGone || !assetsReady) return;
       overlayGone = true;
       overlay?.classList.add('hidden');
     };
-    setTimeout(dismissOverlay, 6500);
+    setTimeout(() => {
+      const tick = setInterval(() => {
+        if (signal.aborted) return clearInterval(tick);
+        if (assetsReady) {
+          clearInterval(tick);
+          setTimeout(dismissOverlay, 2600);
+        }
+      }, 250);
+    }, 4000);
 
     const kset = (k, v) => {
       if (['w', 'W', 'ArrowUp'].includes(k)) keys.f = v;
@@ -1734,6 +2476,7 @@ export function mount() {
         if (v && !keys.jump) jumpBuf = 0.12;
         keys.jump = v;
       } else if (k === 'Shift') keys.dash = v;
+      else if (['c', 'C'].includes(k)) keys.block = v;
       else return false;
       return true;
     };
@@ -1748,9 +2491,13 @@ export function mount() {
           return;
         }
         if (['m', 'M'].includes(e.key)) toggleMute();
+        else if (['f', 'F'].includes(e.key)) attackPress();
+        else if (['e', 'E'].includes(e.key)) skillPress();
+        else if (['q', 'Q'].includes(e.key)) ultPress();
         else if (e.key === 'Enter' && document.activeElement === document.body) {
-          if (nearTree >= 0) location.href = artTrees[nearTree].post.href;
-          else if (nearPipe >= 0) warpTo(pipes[nearPipe].idx);
+          if (nearChest >= 0) location.href = chests[nearChest].post.href;
+          else if (nearGate === 99) warpTo(-1);
+          else if (nearGate >= 0) warpTo(gates[nearGate].idx);
         }
       },
       { signal },
@@ -1773,10 +2520,13 @@ export function mount() {
             stick.x = stick.y = 0;
             return;
           }
+        } else if (e.button === 2) {
+          keys.block = true;
         } else if (drag.id < 0) {
           drag.id = e.pointerId;
           drag.lx = e.clientX;
           drag.ly = e.clientY;
+          drag.moved = 0;
         }
       },
       { signal },
@@ -1799,6 +2549,7 @@ export function mount() {
           }
           if (stick.live && stickNub) stickNub.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
         } else if (e.pointerId === drag.id) {
+          drag.moved += Math.abs(e.clientX - drag.lx) + Math.abs(e.clientY - drag.ly);
           camYaw -= (e.clientX - drag.lx) * 0.006;
           camPitch = THREE.MathUtils.clamp(camPitch + (e.clientY - drag.ly) * 0.004, 0.08, 1.1);
           drag.lx = e.clientX;
@@ -1815,7 +2566,12 @@ export function mount() {
         if (stickEl) stickEl.hidden = true;
         if (stickNub) stickNub.style.transform = '';
       }
-      if (e.pointerId === drag.id) drag.id = -1;
+      if (e.button === 2) keys.block = false;
+      if (e.pointerId === drag.id) {
+        /* a clean click (no orbit) is a swing — Genshin's left hand */
+        if (e.pointerType !== 'touch' && e.button === 0 && drag.moved < 6) attackPress();
+        drag.id = -1;
+      }
     };
     el.addEventListener('pointerup', release, { signal });
     el.addEventListener('pointercancel', release, { signal });
@@ -1858,12 +2614,17 @@ export function mount() {
       () => (keys.jump = false),
     );
     bindBtn('[data-cp-dash]', () => (keys.dash = true), () => (keys.dash = false));
+    bindBtn('[data-cp-atk]', () => attackPress());
+    bindBtn('[data-cp-block]', () => (keys.block = true), () => (keys.block = false));
+    bindBtn('[data-cp-skill]', () => skillPress());
+    bindBtn('[data-cp-ult]', () => ultPress());
 
     hud?.querySelector('[data-cp-card]')?.addEventListener(
       'click',
       () => {
-        if (nearTree >= 0) location.href = artTrees[nearTree].post.href;
-        else if (nearPipe >= 0) warpTo(pipes[nearPipe].idx);
+        if (nearChest >= 0) location.href = chests[nearChest].post.href;
+        else if (nearGate === 99) warpTo(-1);
+        else if (nearGate >= 0) warpTo(gates[nearGate].idx);
       },
       { signal },
     );
@@ -1903,11 +2664,29 @@ export function mount() {
     el.innerHTML = POWERS.map(
       (p) =>
         `<span class="${read.size >= p.need ? 'on' : ''}" title="${p.desc}">${p.name}${
-          read.size >= p.need ? '' : ` ✿${p.need}`
+          read.size >= p.need ? '' : ` ⚿${p.need}`
         }</span>`,
     ).join('');
     const readEl = hud?.querySelector('[data-cp-read]');
     if (readEl) readEl.textContent = `${read.size}/${posts.length}`;
+  }
+
+  function syncVitals() {
+    if (!hud?.els) return;
+    hud.els.hp.style.width = `${(combat.hp / combat.maxHp) * 100}%`;
+    hud.els.rage.style.width = `${combat.rage}%`;
+    hud.els.kitUlt.classList.toggle('ready', powerOn('ult') && combat.rage >= 100);
+  }
+
+  function syncKit() {
+    if (!hud?.els) return;
+    hud.els.kitSkill.classList.toggle('off', !powerOn('skill'));
+    hud.els.kitUlt.classList.toggle('off', !powerOn('ult'));
+    hud.els.cdSkill.textContent = combat.skillCd > 0.05 ? Math.ceil(combat.skillCd) : '';
+    const bSkill = hud.querySelector('[data-cp-skill]');
+    const bUlt = hud.querySelector('[data-cp-ult]');
+    if (bSkill) bSkill.disabled = !powerOn('skill') || combat.skillCd > 0;
+    if (bUlt) bUlt.disabled = !powerOn('ult') || combat.rage < 100;
   }
 
   /* ----- physics + game loop ----- */
@@ -1917,8 +2696,8 @@ export function mount() {
   const camLook = new THREE.Vector3(); // dedicated — never aliases the scratch
   let hudTimer = 0;
 
-  const maxRun = () => (powerOn('boost') ? 16 : 13);
-  const jumpV = () => (powerOn('boost') ? 18 : 15.5);
+  const maxRun = () => (powerOn('berserk') ? 15 : 13);
+  const jumpV = () => (powerOn('berserk') ? 17.5 : 15.5);
 
   /* highest support under the player's feet. refY must be the PRE-step y:
      filtering by the post-step y lets a fast fall skip past a floor in one
@@ -1931,8 +2710,7 @@ export function mount() {
     let bestBox = null;
     for (const b of boxes) {
       if (b.round) {
-        /* the hub disc */
-        if (px * px + pz * pz > b.round * b.round) continue;
+        if ((px - b.x) * (px - b.x) + (pz - b.z) * (pz - b.z) > b.round * b.round) continue;
       } else if (Math.abs(px - b.x) > b.hx + 0.3 || Math.abs(pz - b.z) > b.hz + 0.3) continue;
       const top = b.y + b.hy;
       if (top <= py + 0.25 && top > best) {
@@ -1969,6 +2747,71 @@ export function mount() {
       }
     }
 
+    /* --- combat timers --- */
+    combat.iframes = Math.max(0, combat.iframes - dt);
+    combat.skillCd = Math.max(0, combat.skillCd - dt);
+    combat.chainGrace = Math.max(0, combat.chainGrace - dt);
+    combat.sinceHurt += dt;
+    if (combat.sinceHurt > 5 && combat.hp < combat.maxHp) {
+      combat.hp = Math.min(combat.maxHp, combat.hp + 6 * dt);
+    }
+    hurtFlash = Math.max(0, hurtFlash - dt * 2.2);
+    gradePass.uniforms.uHurt.value = hurtFlash * 0.55;
+
+    /* block only holds while grounded and not mid-ability */
+    combat.blocking = keys.block && !busy() && assetsReady;
+
+    /* attack chain progress */
+    if (combat.atkT > 0) {
+      combat.atkT += dt;
+      const s = combat.atkStep;
+      const hitMoment = s.hitAt * combat.atkDur;
+      if (!combat.atkHitDone && combat.atkT >= hitMoment) {
+        combat.atkHitDone = true;
+        meleeHit(s.range, 1.15, s.dmg, '#ffe9a0'); /* rage accrues per foe struck, in damageFoe */
+        puffAt(
+          player.position.x + Math.sin(facing) * 1.6,
+          player.position.y + 1.0,
+          player.position.z + Math.cos(facing) * 1.6,
+          0xfff1d6,
+          0.7,
+          0.3,
+        );
+      }
+      if (combat.atkT >= combat.atkDur) {
+        const next = (combat.chain + 1) % ATK_STEPS.length;
+        combat.atkT = 0;
+        combat.chain = next;
+        combat.chainGrace = 0.5;
+        if (combat.queued) startAttack(next);
+      }
+    }
+
+    /* cyclone */
+    if (combat.skillT > 0) {
+      combat.skillT += dt;
+      if (!combat.skillHitDone && combat.skillT >= SKILL_DUR * 0.45) {
+        combat.skillHitDone = true;
+        meleeHit(4.0, Math.PI, 2, '#9adcf0');
+        ringAt(player.position.x, 0.4, player.position.z, { maxR: 4.6, speed: 9, color: 0x9adcf0 });
+      }
+      if (combat.skillT >= SKILL_DUR) combat.skillT = 0;
+    }
+
+    /* ground slam ultimate */
+    if (combat.ultT > 0) {
+      combat.ultT += dt;
+      if (!combat.ultHitDone && combat.ultT >= ULT_DUR * 0.55) {
+        combat.ultHitDone = true;
+        meleeHit(7.2, Math.PI, 5, '#ffd766');
+        ringAt(player.position.x, 0.4, player.position.z, { maxR: 8.5, speed: 12, color: 0xffd766 });
+        shake = Math.min(0.6, shake + 0.45);
+        audio.ultBoom();
+        puffAt(player.position.x, 0.6, player.position.z, 0xfff1d6, 2.2, 0.9);
+      }
+      if (combat.ultT >= ULT_DUR) combat.ultT = 0;
+    }
+
     /* --- input → camera-relative run --- */
     let ix = 0;
     let iz = 0;
@@ -1984,26 +2827,41 @@ export function mount() {
       ix /= ilen;
       iz /= ilen;
     }
-    /* rotate by camera yaw */
     const sin = Math.sin(camYaw);
     const cos = Math.cos(camYaw);
     const wx = ix * cos - iz * sin;
     const wz = ix * sin + iz * cos;
 
     dashCd = Math.max(0, dashCd - dt);
-    if (keys.dash && powerOn('dash') && dashCd <= 0 && dashT <= 0 && ilen > 0.2) {
-      dashT = 0.18;
+    if (keys.dash && dashCd <= 0 && dashT <= 0 && ilen > 0.2 && !busy()) {
+      dashT = 0.22;
       dashCd = 0.9;
+      combat.chargeHits.clear();
       audio.dash();
     }
     dashT = Math.max(0, dashT - dt);
 
+    /* charging through a foe knocks it aside */
+    if (dashT > 0 && assetsReady) {
+      for (const foe of foes) {
+        if (foe.dead || foe.zone !== inCourse || combat.chargeHits.has(foe)) continue;
+        const d = Math.hypot(foe.group.position.x - player.position.x, foe.group.position.z - player.position.z);
+        if (d < 1.6 + foe.radius) {
+          combat.chargeHits.add(foe);
+          damageFoe(foe, 1, player.position.x - vel.x, player.position.z - vel.z, '#ffe9a0');
+        }
+      }
+    }
+
+    /* heavy moves root the warrior */
+    const moveMul = combat.ultT > 0 ? 0.06 : combat.atkT > 0 ? 0.22 : combat.skillT > 0 ? 0.45 : combat.blocking ? 0.32 : 1;
+
     const accel = onGround ? 70 : 26;
-    const target = maxRun() * (dashT > 0 ? 2.1 : 1);
-    if (ilen > 0.05 || dashT > 0) {
-      vel.x = THREE.MathUtils.lerp(vel.x, wx * target, 1 - Math.exp((-dt * accel) / target));
-      vel.z = THREE.MathUtils.lerp(vel.z, wz * target, 1 - Math.exp((-dt * accel) / target));
-      facing = Math.atan2(vel.x, vel.z);
+    const target = maxRun() * (dashT > 0 ? 2.1 : 1) * moveMul;
+    if ((ilen > 0.05 || dashT > 0) && moveMul > 0.05) {
+      vel.x = THREE.MathUtils.lerp(vel.x, wx * target, 1 - Math.exp((-dt * accel) / Math.max(target, 1)));
+      vel.z = THREE.MathUtils.lerp(vel.z, wz * target, 1 - Math.exp((-dt * accel) / Math.max(target, 1)));
+      if (combat.atkT <= 0 && combat.ultT <= 0) facing = Math.atan2(vel.x, vel.z);
     } else if (onGround) {
       vel.x *= Math.exp(-dt * 10);
       vel.z *= Math.exp(-dt * 10);
@@ -2012,7 +2870,7 @@ export function mount() {
     /* --- jumping --- */
     jumpBuf = Math.max(0, jumpBuf - dt);
     coyote = Math.max(0, coyote - dt);
-    if (jumpBuf > 0) {
+    if (jumpBuf > 0 && combat.ultT <= 0 && combat.skillT <= 0) {
       if (onGround || coyote > 0) {
         vel.y = jumpV();
         onGround = false;
@@ -2033,10 +2891,7 @@ export function mount() {
     }
     /* variable jump height: let go early, rise less */
     if (!keys.jump && vel.y > 6) vel.y = 6;
-    /* glide: hold jump while falling */
-    gliding = keys.jump && !onGround && vel.y < 0 && powerOn('glide');
-    vel.y -= (gliding ? 14 : 42) * dt;
-    if (gliding) vel.y = Math.max(vel.y, -3.2);
+    vel.y -= 42 * dt;
     vel.y = Math.max(vel.y, -34); // terminal velocity keeps step sizes sane
 
     /* --- integrate + collide --- */
@@ -2094,6 +2949,46 @@ export function mount() {
     /* fell off the world */
     if (player.position.y < -34) respawn();
 
+    /* --- foes --- */
+    if (assetsReady) for (const foe of foes) updateFoe(foe, dt);
+
+    /* --- shockwave rings --- */
+    for (const rg of rings) {
+      if (rg.life <= 0) continue;
+      rg.r += rg.speed * dt;
+      rg.life = 1 - rg.r / rg.maxR;
+      if (rg.life <= 0) {
+        rg.m.visible = false;
+        continue;
+      }
+      rg.m.scale.set(rg.r, 1, rg.r);
+      rg.m.material.opacity = Math.min(0.85, rg.life * 1.4);
+      if (rg.lethal && !rg.hit) {
+        const d = Math.hypot(player.position.x - rg.x, player.position.z - rg.z);
+        const grounded = player.position.y - (findGround().top > -Infinity ? findGround().top : 0) < 1.1;
+        if (Math.abs(d - rg.r) < 1.3 && grounded) {
+          rg.hit = true;
+          damagePlayer(22, rg.x, rg.z);
+        }
+      }
+    }
+
+    /* --- damage pops drift up (world → screen each frame) --- */
+    for (let i = pops.length - 1; i >= 0; i--) {
+      const p = pops[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        p.el.remove();
+        pops.splice(i, 1);
+        continue;
+      }
+      p.y += dt * 1.6;
+      popV.set(p.x, p.y, p.z).project(camera);
+      const vis = popV.z < 1;
+      p.el.style.opacity = vis ? String(Math.min(1, p.life * 2.2)) : '0';
+      p.el.style.transform = `translate(-50%, -50%) translate(${((popV.x * 0.5 + 0.5) * innerWidth).toFixed(1)}px, ${((-popV.y * 0.5 + 0.5) * innerHeight).toFixed(1)}px)`;
+    }
+
     /* --- mushrooms bounce --- */
     for (const sh of shrooms) {
       sh.squish = Math.max(0, sh.squish - dt * 3);
@@ -2142,7 +3037,7 @@ export function mount() {
         st.mesh.visible = false;
         store.stars(st.idx);
         audio.star();
-        hud?.toast(`★ ${COURSE_NAMES[st.idx]} cleared!`, 'gold');
+        hud?.toast(`★ the star of ${BOSS_NAMES[st.idx]} is yours!`, 'gold');
         if (hud?.els) hud.els.stars.textContent = `${store.stars().length}/3`;
         setTimeout(() => {
           if (!signal.aborted) warpTo(-1);
@@ -2150,156 +3045,90 @@ export function mount() {
       }
     }
 
-    /* --- near a tree sign or a pipe? --- */
-    let bestTree = -1;
-    let bestD = 36;
-    for (let i = 0; i < artTrees.length; i++) {
-      const t = artTrees[i];
+    /* --- near a chest or a gate? --- */
+    let bestChest = -1;
+    let bestD = 30;
+    for (let i = 0; i < chests.length; i++) {
+      const t = chests[i];
       const dx = t.x - player.position.x;
       const dz = t.z - player.position.z;
       const d2 = dx * dx + dz * dz;
       if (d2 < bestD) {
         bestD = d2;
-        bestTree = i;
+        bestChest = i;
       }
     }
-    let bestPipe = -1;
+    let bestGate = -1;
     if (inCourse < 0) {
-      for (let i = 0; i < pipes.length; i++) {
-        const dx = pipes[i].x - player.position.x;
-        const dz = pipes[i].z - player.position.z;
-        if (dx * dx + dz * dz < 16) bestPipe = i;
+      for (let i = 0; i < gates.length; i++) {
+        const dx = gates[i].x - player.position.x;
+        const dz = gates[i].z - player.position.z;
+        if (dx * dx + dz * dz < 22) bestGate = i;
       }
+    } else {
+      /* the return gate */
+      const arena = arenas[inCourse];
+      const dx = arena.exit.x - player.position.x;
+      const dz = arena.exit.z - player.position.z;
+      if (dx * dx + dz * dz < 16) bestGate = 99; // sentinel: exit
     }
-    if (bestPipe >= 0) bestTree = -1;
-    if (bestTree !== nearTree || bestPipe !== nearPipe) {
-      nearTree = bestTree;
-      nearPipe = bestPipe;
+    if (bestGate >= 0) bestChest = -1;
+    if (bestChest !== nearChest || bestGate !== nearGate) {
+      nearChest = bestChest;
+      nearGate = bestGate;
       const card = hud?.els?.card;
       if (card) {
-        if (nearPipe >= 0) {
-          const p = pipes[nearPipe];
+        if (nearGate === 99) {
           card.hidden = false;
-          card.innerHTML = `<b>⤵ warp pipe: ${COURSE_NAMES[p.idx]}</b><span>a floating course — bring back the star${
-            p.done ? ' (★ already yours)' : ''
-          }</span><i>${coarse ? 'TAP TO WARP' : 'PRESS ⏎ TO WARP'}</i>`;
-        } else if (nearTree >= 0) {
-          const t = artTrees[nearTree];
+          card.innerHTML = `<b>⤴ forest gate</b><span>back to the deep forest</span><i>${coarse ? 'TAP TO RETURN' : 'PRESS ⏎ TO RETURN'}</i>`;
+        } else if (nearGate >= 0) {
+          const p = gates[nearGate];
           card.hidden = false;
-          card.innerHTML = `<b>${t.read ? '✿' : '🌱'} ${t.post.title}</b><span>${t.post.date}${
-            t.read ? ' · bloomed' : ' · reading grows a power'
-          }</span><i>${coarse ? 'TAP TO READ' : 'PRESS ⏎ TO READ'}</i>`;
+          card.innerHTML = `<b>☠ boss gate: ${BOSS_NAMES[p.idx]}</b><span>${
+            p.done || arenas[p.idx].cleared ? 'conquered — visit the arena again' : 'an ogre guards a star beyond'
+          }</span><i>${coarse ? 'TAP TO ENTER' : 'PRESS ⏎ TO ENTER'}</i>`;
+        } else if (nearChest >= 0) {
+          const t = chests[nearChest];
+          card.hidden = false;
+          card.innerHTML = `<b>${t.read ? '⚿' : '🔒'} ${t.post.title}</b><span>${t.post.date}${
+            t.read ? ' · plundered' : ' · opening grows a talent'
+          }</span><i>${coarse ? 'TAP TO OPEN' : 'PRESS ⏎ TO OPEN'}</i>`;
         } else card.hidden = true;
       }
     }
 
-    /* --- player visuals: pose machine, scarf, face, blob shadow --- */
-    const { body, blobShadow, rig } = player.userData;
+    /* --- player visuals: clip machine, squash, blob shadow --- */
     body.rotation.y = THREE.MathUtils.lerp(body.rotation.y, facing, 1 - Math.exp(-dt * 12));
     squash *= Math.exp(-dt * 7);
     body.scale.y = 1 - squash * 0.3;
     body.scale.x = body.scale.z = 1 + squash * 0.18;
     const spd = Math.hypot(vel.x, vel.z);
-    const run = THREE.MathUtils.clamp(spd / 8, 0, 1);
-    runPhase += spd * dt * 1.9;
-    {
-      const k = 1 - Math.exp(-dt * 11);
-      const pose = (o, rx, rz = 0) => {
-        o.rotation.x = THREE.MathUtils.lerp(o.rotation.x, rx, k);
-        o.rotation.z = THREE.MathUtils.lerp(o.rotation.z, rz, k);
-      };
-      if (dashT > 0) {
-        /* dash: hard lean, arms swept back */
-        pose(rig.armL, 1.3, -0.25);
-        pose(rig.armR, 1.3, 0.25);
-        pose(rig.legL, 0.7);
-        pose(rig.legR, -0.4);
-        pose(rig.torso, 0.45);
-        pose(rig.head, -0.2);
-      } else if (gliding) {
-        /* glide: full wingspan, legs trailing */
-        pose(rig.armL, 0, -1.5);
-        pose(rig.armR, 0, 1.5);
-        pose(rig.legL, 0.35);
-        pose(rig.legR, 0.45);
-        pose(rig.torso, 0.3);
-        pose(rig.head, -0.15);
-      } else if (!onGround) {
-        if (vel.y > 1) {
-          /* rising: tuck, arms thrown up */
-          pose(rig.armL, -2.4, -0.35);
-          pose(rig.armR, -2.4, 0.35);
-          pose(rig.legL, -0.9);
-          pose(rig.legR, 0.6);
-          pose(rig.torso, 0.12);
-          pose(rig.head, 0);
-        } else {
-          /* falling: limbs spread, braced */
-          pose(rig.armL, -0.6, -0.9);
-          pose(rig.armR, -0.6, 0.9);
-          pose(rig.legL, 0.25);
-          pose(rig.legR, -0.25);
-          pose(rig.torso, -0.06);
-          pose(rig.head, 0.08);
+    if (heroAnim) {
+      if (!busy() && !combat.blocking) {
+        const desired = !onGround
+          ? vel.y > 1
+            ? 'jump'
+            : 'fall'
+          : dashT > 0
+            ? 'charge'
+            : spd > 6.5
+              ? 'run'
+              : spd > 0.7
+                ? 'walk'
+                : 'idle';
+        if (heroAnim.current !== desired)
+          heroAnim.play(desired, { once: desired === 'jump', clamp: desired === 'jump', fade: 0.14 });
+      } else if (combat.blocking) {
+        if (heroAnim.current !== 'block') {
+          const d = heroAnim.duration('block');
+          heroAnim.play('block', { once: true, clamp: true, fade: 0.1, timeScale: d / 0.5 });
         }
-      } else if (run > 0.12) {
-        /* run cycle keyed to ground speed, arms counter-swing */
-        const s = Math.sin(runPhase);
-        pose(rig.legL, s * 0.95 * run);
-        pose(rig.legR, -s * 0.95 * run);
-        pose(rig.armL, -s * 0.75 * run, -0.12);
-        pose(rig.armR, s * 0.75 * run, 0.12);
-        pose(rig.torso, 0.14 * run);
-        pose(rig.head, -0.05 * run);
-        rig.head.position.y = 1.08 + Math.abs(Math.cos(runPhase)) * 0.035 * run;
-      } else {
-        /* idle: breathing */
-        pose(rig.armL, 0, -0.08);
-        pose(rig.armR, 0, 0.08);
-        pose(rig.legL, 0);
-        pose(rig.legR, 0);
-        pose(rig.torso, 0);
-        pose(rig.head, 0);
-        rig.head.position.y = 1.08 + Math.sin(time * 2) * 0.012;
+        /* freeze at the guard-up frame — the clip's tail lowers the guard
+           and its end pose sinks the rig through the floor */
+        const act = heroAnim.actions.block;
+        if (act && act.time > heroAnim.duration('block') * 0.38) act.paused = true;
       }
-    }
-    rig.ahoge.rotation.x = Math.sin(time * 2.6) * 0.18;
-    if (gliding && !reduced) body.rotation.z = Math.sin(time * 6) * 0.12;
-    else body.rotation.z = 0;
-
-    /* blink */
-    blinkT -= dt;
-    if (blinkT <= 0 && eyesOpen) {
-      rig.drawFace(false);
-      eyesOpen = false;
-    }
-    if (blinkT <= -0.13 && !eyesOpen) {
-      rig.drawFace(true);
-      eyesOpen = true;
-      blinkT = 2.2 + Math.random() * 2.6;
-    }
-
-    /* scarf: follow-the-leader with droop and breeze, world space */
-    {
-      const yaw = body.rotation.y;
-      const pts = rig.scarfPts;
-      scarfV.set(player.position.x - 0.2 * Math.sin(yaw), player.position.y + 1.02, player.position.z - 0.2 * Math.cos(yaw));
-      pts[0].copy(scarfV);
-      for (let i = 1; i < pts.length; i++) {
-        const pt = pts[i];
-        pt.y -= dt * 2.2;
-        pt.x += Math.sin(time * 3.1 + i * 1.1) * dt * 0.35;
-        scarfV.subVectors(pt, pts[i - 1]);
-        const L = scarfV.length() || 1e-5;
-        pt.copy(pts[i - 1]).addScaledVector(scarfV, 0.15 / L);
-      }
-      for (let i = 0; i < rig.scarfSegs.length; i++) {
-        const m = rig.scarfSegs[i];
-        m.position.copy(pts[i]).add(pts[i + 1]).multiplyScalar(0.5).sub(player.position);
-      }
-      /* lookAt reads each seg's own matrixWorld — refresh after moving them */
-      player.updateMatrixWorld();
-      for (let i = 0; i < rig.scarfSegs.length; i++) rig.scarfSegs[i].lookAt(pts[i + 1]);
+      heroAnim.mixer.update(dt);
     }
     const gB = findGround();
     blobShadow.position.y = (gB.top > -Infinity ? gB.top : 0) - player.position.y + 0.03;
@@ -2335,6 +3164,15 @@ export function mount() {
         u.l.rotation.y = Math.PI - flap;
         u.r.rotation.y = flap;
       }
+      /* open chests shimmer */
+      for (const ch of chests) {
+        if (ch.read && ch.beam.visible) {
+          ch.beam.material.opacity = 0.5 + Math.sin(time * 2.4 + ch.x) * 0.25;
+          ch.loot.rotation.y += dt * 1.4;
+        }
+      }
+      /* gate veils swirl */
+      for (const gt of gates) gt.veil.material.opacity = 0.66 + Math.sin(time * 1.8 + gt.idx * 2) * 0.12;
     }
     for (const p of puffs) {
       if (p.life <= 0) continue;
@@ -2358,7 +3196,8 @@ export function mount() {
     sun.position.set(sx + SUN_OFF.x, SUN_OFF.y, sz + SUN_OFF.z);
     sun.target.position.set(sx, 0, sz);
 
-    /* --- camera: orbit follow --- */
+    /* --- camera: orbit follow + impact shake --- */
+    shake = Math.max(0, shake - dt * 1.6);
     const cy = Math.sin(camPitch) * camDist;
     const ch = Math.cos(camPitch) * camDist;
     tmpV2.set(
@@ -2367,13 +3206,19 @@ export function mount() {
       player.position.z + Math.cos(camYaw) * ch,
     );
     camera.position.lerp(tmpV2, reduced ? 1 : 1 - Math.exp(-dt * 6));
+    if (shake > 0.01 && !reduced) {
+      camera.position.x += (Math.random() - 0.5) * shake * 0.5;
+      camera.position.y += (Math.random() - 0.5) * shake * 0.5;
+    }
     camLook.copy(player.position);
     camLook.y += 1.4;
     camera.lookAt(camLook);
 
     /* --- HUD tick --- */
-    if ((hudTimer += dt) > 0.25 && hud?.els) {
+    if ((hudTimer += dt) > 0.2 && hud?.els) {
       hudTimer = 0;
+      syncVitals();
+      syncKit();
     }
 
     composer.render();
@@ -2394,11 +3239,12 @@ export function mount() {
     } catch {}
     if (signal.aborted) return;
     /* redraw signs now the display font is in */
-    for (const t of artTrees) {
+    for (const t of chests) {
       const tex = signTexture(t.post, t.read);
-      t.sign.material.map?.dispose();
-      t.sign.material.map = tex;
-      t.sign.material.needsUpdate = true;
+      const m = t.sign.userData.faceMat;
+      m.map?.dispose();
+      m.map = tex;
+      m.needsUpdate = true;
     }
     hud = makeHud(POWERS, coinCount, store.stars().length, posts.length);
     hud.els = {
@@ -2406,17 +3252,104 @@ export function mount() {
       stars: hud.querySelector('[data-cp-stars]'),
       card: hud.querySelector('[data-cp-card]'),
       course: hud.querySelector('[data-cp-course]'),
+      hp: hud.querySelector('[data-cp-hp]'),
+      rage: hud.querySelector('[data-cp-rage]'),
+      bossbar: hud.querySelector('[data-cp-bossbar]'),
+      bossname: hud.querySelector('[data-cp-bossname]'),
+      bosshp: hud.querySelector('[data-cp-bosshp]'),
+      kitSkill: hud.querySelector('[data-cp-k="skill"]'),
+      kitUlt: hud.querySelector('[data-cp-k="ult"]'),
+      cdSkill: hud.querySelector('[data-cp-cd="skill"]'),
+      overlaySub: hud.querySelector('[data-cp-overlay-sub]'),
     };
     renderPowers();
+    syncVitals();
+    syncKit();
     document.documentElement.dataset.world = 'on';
     bindInput();
     if (inCourse >= 0) {
       const el = hud.els.course;
       el.hidden = false;
-      el.textContent = `★ ${COURSE_NAMES[inCourse]} — reach the star`;
+      el.textContent = arenas[inCourse].cleared
+        ? `★ ${BOSS_NAMES[inCourse]} — already conquered`
+        : `☠ ${BOSS_NAMES[inCourse]} — fell the beast`;
     }
     camera.position.copy(player.position).add(new THREE.Vector3(0, 6, 13));
     raf = requestAnimationFrame(frame);
+
+    /* the rigged cast loads alongside the world — swap in when ready */
+    try {
+      const assets = await loadAssets(signal);
+      if (signal.aborted) return;
+      toonify(assets.hero.scene, toneRamp);
+      const heroScale = normalizeHeight(assets.hero.scene, 1.72);
+      body.remove(placeholder);
+      placeholder.geometry.dispose();
+      placeholder.material.dispose();
+      body.add(assets.hero.scene);
+      heroAnim = makeAnimator(assets.hero.scene, assets.hero.clips);
+      heroAnim.play('idle');
+
+      /* the axe rides the right hand bone. The bones carry the rig's
+         centimeter bind scale (~0.01) — a child of a bone inherits it, so
+         counter the hand's WORLD scale or the axe shrinks to a speck */
+      toonify(assets.axe, toneRamp);
+      const AXE_LEN = 1.7;
+      normalizeHeight(assets.axe, AXE_LEN);
+      assets.axe.position.set(0, -0.32, 0); // grip the upper shaft (axe origin = bbox center)
+      const hand = assets.hero.scene.getObjectByName('RightHand');
+      if (hand) {
+        assets.hero.scene.updateWorldMatrix(true, true);
+        const handScale = new THREE.Vector3();
+        hand.getWorldScale(handScale);
+        const wrap = new THREE.Group();
+        wrap.scale.set(1 / handScale.x, 1 / handScale.y, 1 / handScale.z);
+        /* shaft along the fist's Z — the blade arcs with the swing plane */
+        wrap.rotation.set(0, 0, Math.PI / 2);
+        wrap.position.set(0, 0.04, 0.02);
+        wrap.add(assets.axe);
+        hand.add(wrap);
+        /* grip tuning + scene probing hook for headless QA — inert unless
+           the flag is set */
+        try {
+          if (localStorage.getItem('canopy-debug'))
+            window.__cw = {
+              wrap,
+              axe: assets.axe,
+              hand,
+              hero: assets.hero.scene,
+              foes,
+              player,
+              damageFoe,
+              pick: (nx, ny) => {
+                const rc = new THREE.Raycaster();
+                rc.setFromCamera(new THREE.Vector2(nx, ny), camera);
+                return rc.intersectObjects(scene.children, true).slice(0, 5).map((h) => ({
+                  name: h.object.name || h.object.type,
+                  geo: h.object.geometry?.type,
+                  mat: h.object.material?.type,
+                  color: h.object.material?.color?.getHexString?.(),
+                  hasMap: !!h.object.material?.map,
+                  d: +h.distance.toFixed(1),
+                }));
+              },
+            };
+        } catch {}
+      }
+
+      toonify(assets.minion.scene, toneRamp);
+      toonify(assets.boss.scene, toneRamp);
+      spawnFoes(assets);
+      assetsReady = true;
+      if (hud.els.overlaySub)
+        hud.els.overlaySub.textContent = coarse
+          ? 'left thumb runs · ⚔ swings the axe · 🛡 blocks · open chests to grow talents'
+          : 'every chest is an article — open them to grow your talents. gremlins bite back.';
+    } catch (err) {
+      console.warn('canopy: rigged cast failed to load', err);
+      if (hud.els.overlaySub) hud.els.overlaySub.textContent = 'the warrior is lost in the fog — wandering in spirit form (assets failed to load)';
+      hud.toast('⚠ could not load the 3D cast — exploration only');
+    }
   };
   start();
 
@@ -2425,6 +3358,8 @@ export function mount() {
     audio.dispose();
     ac.abort();
     cancelAnimationFrame(raf);
+    for (const foe of foes) foe.anim.mixer.stopAllAction();
+    heroAnim?.mixer.stopAllAction();
     scene.traverse((o) => {
       o.geometry?.dispose?.();
       const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
@@ -2447,3 +3382,6 @@ export function mount() {
 
   return { unmount };
 }
+
+
+

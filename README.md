@@ -62,29 +62,34 @@ first visit follows `prefers-color-scheme` (dark → phosphor, light → gazette
 | system   | retro desk         | Silkscreen · Chivo · Fragment |
 | vector   | context overworld  | VT323 · JetBrains Mono        |
 | sodium   | night drive        | Michroma · Outfit · Martian   |
-| canopy   | overworld          | Fredoka · Nunito · Space Mono |
+| canopy   | the deep forest    | Fredoka · Nunito · Space Mono |
 
 Each style is one file in `src/styles/` overriding the token contract declared
 in `global.css` (colors, fonts, radii, border weights) plus its own signature
 moves under `[data-style="…"]`. The base renders complete with JS disabled, and
 the browser only downloads the fonts the active style uses.
 
-## canopy: the overworld
+## canopy: the deep forest
 
-Pick **canopy** and the homepage becomes a sunny 3D platformer: a floating
-forest meadow where every article is a tree along a winding trail — a pale
-sapling until you read it, then it blooms. Reading is the progression
-system: articles unlock real movement power-ups (double jump at 1, dash at
-3, glide at 6, bloom boost at 10).
+Pick **canopy** and the homepage becomes a sunny action-adventure: a dense
+floating forest where every article is a treasure chest along a winding
+trail — locked until you read it, then open and glowing. Reading is the
+progression system: chests unlock combat talents (double jump at 1, the
+cyclone skill at 3, the ground-slam ultimate at 6, berserk at 10).
 
-- Platformer-honest movement: coyote time, jump buffering, variable jump
-  height, squash and stretch. `WASD` runs, `space` jumps (hold to glide),
-  `shift` dashes, drag orbits the camera. Touch: stick + A/B buttons.
-- Coins to collect, mushrooms that launch you, a floating platform
-  playground, and three warp pipes leading to seeded island-hopping courses
-  with a star at the summit.
-- Soft sun shadows, drifting clouds, synth birdsong — procedural, no assets,
-  and only canopy pays for the chunk.
+- A TERA-flavored kit on platformer-honest movement: a 3-hit axe chain that
+  chains on click/`F`, hold-to-block (`RMB`/`C`) that eats frontal hits and
+  feeds rage, `E` cyclone on cooldown, `Q` rage-fueled ground slam, `shift`
+  charge — plus coyote time, jump buffering and variable jump height
+  underneath. Touch gets a stick and a six-button cluster.
+- Gremlins prowl their camps and drop coins; three mossy boss gates warp to
+  forest-clearing arenas where an ogre (Mossback, Old Knucklebark, the
+  Hollow King) guards a star — taunt intro, swing combos, dodge-the-ring
+  ground slams, an enrage at half health.
+- The hero, gremlin, ogre and the axe are Meshy-generated rigged GLBs
+  (~4 MB all-in, meshopt + webp), cel-shaded in-engine to match the toy
+  look; everything else stays procedural, and only canopy pays for the
+  chunk.
 
 ## vector: the blog as a game
 
