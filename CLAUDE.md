@@ -172,7 +172,9 @@ Rules that keep it healthy:
   the iGPU two thirds of its frame rate.
 - Stunt ramps drive real y-physics (`vy`/`airborne` in the frame loop) — the
   car's y is sampled from ramp surfaces, never hard-set to 0.
-- AO strategy: canopy runs GTAO on every device (fewer samples on coarse);
+- AO strategy: canopy runs GTAO on every device (fewer samples on coarse),
+  behind a persisted HUD toggle (`canopy-fx`, default on — flips
+  `gtaoPass.enabled` live, no rebuild);
   sodium deliberately does NOT — AO occludes ambient light and that scene is
   lamp-lit night, so GTAO measured -20fps for an invisible change. Both
   worlds bake vertex AO into geometry (`bakeVertexAO`) and a canvas

@@ -41,6 +41,7 @@ const READ_KEY = 'canopy-read';
 const COIN_KEY = 'canopy-coins';
 const STAR_KEY = 'canopy-stars';
 const MUTE_KEY = 'canopy-mute';
+const FX_KEY = 'canopy-fx';
 const PLAYER_KEY = 'canopy-player'; // sessionStorage: position across visits
 
 /* power-ups unlock from articles read — the whole point of the forest */
@@ -93,6 +94,15 @@ const store = {
       return !!localStorage.getItem(MUTE_KEY);
     } catch {
       return false;
+    }
+  },
+  /* fancy rendering (GTAO) — on unless the player turns it off */
+  fx(set) {
+    try {
+      if (set !== undefined) localStorage.setItem(FX_KEY, set ? '' : '0');
+      return localStorage.getItem(FX_KEY) !== '0';
+    } catch {
+      return true;
     }
   },
   playerState(state) {
@@ -367,7 +377,7 @@ function makeHud(powers, coins, stars, total) {
       <div><span class="cp-coin">●</span> <b data-cp-coins>${coins}</b> &nbsp; ★ <b data-cp-stars>${stars}/3</b> &nbsp; ✿ <b data-cp-read>0/${total}</b></div>
       <div class="cp-powers" data-cp-powers></div>
     </div>
-    <div class="cp-corner"><button type="button" data-cp-mute aria-label="Toggle sound"></button></div>
+    <div class="cp-corner"><button type="button" data-cp-fx aria-label="Toggle fancy rendering"></button><button type="button" data-cp-mute aria-label="Toggle sound"></button></div>
     <div class="cp-toasts" data-cp-toasts aria-live="polite"></div>
     <div class="cp-course" data-cp-course hidden></div>
     <div class="cp-card" data-cp-card hidden></div>
@@ -524,6 +534,7 @@ export function mount() {
     rings: 2,
     samples: coarse ? 8 : 16,
   });
+  gtaoPass.enabled = store.fx();
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(gtaoPass);
   composer.addPass(bloomPass);
@@ -1299,12 +1310,27 @@ export function mount() {
       { signal },
     );
     hud?.querySelector('[data-cp-mute]')?.addEventListener('click', toggleMute, { signal });
+    hud?.querySelector('[data-cp-fx]')?.addEventListener('click', toggleFx, { signal });
     syncMute();
+    syncFx();
   }
 
   function syncMute() {
     const b = hud?.querySelector('[data-cp-mute]');
     if (b) b.textContent = audio.muted() ? '♪ off' : '♪ on';
+  }
+
+  function syncFx() {
+    const b = hud?.querySelector('[data-cp-fx]');
+    if (b) b.textContent = store.fx() ? '✨ fx on' : '✨ fx off';
+  }
+
+  function toggleFx() {
+    const on = !store.fx();
+    store.fx(on);
+    gtaoPass.enabled = on;
+    syncFx();
+    hud?.toast(on ? '✨ fancy rendering on' : '✨ fancy rendering off — smoother on small devices');
   }
 
   function toggleMute() {
