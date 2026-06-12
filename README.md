@@ -100,12 +100,18 @@ complete theme on its own.
 
 ## sodium: the night drive
 
-Pick **sodium** and the homepage becomes a nocturne you drive through: a ring
-road around a lake, lit by sodium streetlights under a custom-shader sky
-(stars, moon, a faint aurora). Every post is a billboard exit on the shoulder
-— dark static until you pull up close, when it boots into a glowing card.
-Discovery is the game: `docs n/m discovered`, persisted.
+Pick **sodium** and the homepage becomes a toy nocturne you drive through: a
+checker-tiled world under a blue night, a ring road around a lake, sodium
+streetlights, a custom-shader sky (stars, moon, a faint aurora). Every post
+is a billboard exit on the shoulder — dark static until you pull up close,
+when it boots into a glowing card. Discovery is the game: `docs n/m
+discovered`, persisted.
 
+- A playset world: blobby flat-shaded trees in teal and pink, low-poly grass
+  tufts everywhere, a chunky toy jeep with a roof rack and a spare on the
+  tailgate — and things to crash into: bowling-pin clusters on the shoulders
+  (`pins n/m`) and the site's name standing in big drivable letters, all with
+  tumble physics.
 - Real-time moonlight shadows (PCFSoft) that follow the car, planar-reflective
   water with procedurally generated wave normals, wind turbines turning over
   the lake, drifting clouds, fireflies, sky-matched reflections on the paint.

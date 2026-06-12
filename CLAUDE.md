@@ -138,6 +138,16 @@ Rules that keep it healthy:
 - Drive-to-discover: billboards along the ring road render a scrambled "?" face
   until the car gets within range; discovery persists (`sodium-found`), and reading
   an article counts too. Car state round-trips via sessionStorage (`sodium-car`).
+- Toy-world look (bruno-simon-style night): checker-tile ground texture, flat-shaded
+  merged-blob tree canopies (`mergeGeometries`), ~700 instanced grass tufts — when
+  filling an InstancedMesh, never skip a slot: an unset instance renders at the
+  origin (mid-lake). All textures stay canvas-procedural.
+- Knockables (pin clusters + the box-built XANDREED letters) share one toy-physics
+  pool: they are NOT in `colliders` — the car drives through and applies an impulse;
+  rest height follows orientation via `|localY·up|` so props settle standing or
+  lying without a solver. Letter strokes: `rotation.z` is CCW from the front, and
+  screen-right from the road is *decreasing* ring angle — both signs flip glyphs or
+  the whole word into mirror writing.
 - The lake uses `three/addons` `Water` with a procedurally generated normal map —
   no texture assets anywhere; billboard faces and HUD textures are canvas-drawn
   (redrawn after `document.fonts.load`, Michroma/Outfit).
