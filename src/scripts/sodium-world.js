@@ -530,7 +530,7 @@ export function mount() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 1.22;
   renderer.domElement.className = 'sodium-canvas';
   renderer.domElement.setAttribute('aria-hidden', 'true');
   document.body.prepend(renderer.domElement);
@@ -578,7 +578,7 @@ export function mount() {
         col.r = texture2D(tDiffuse, vUv - ca).r;
         col.g = texture2D(tDiffuse, vUv).g;
         col.b = texture2D(tDiffuse, vUv + ca).b;
-        col *= 1.0 - smoothstep(0.12, 0.85, r2) * 0.36;
+        col *= 1.0 - smoothstep(0.15, 0.9, r2) * 0.24;
         col += (hash(vUv * 1024.0 + fract(uTime) * 7.13) - 0.5) * 0.03;
         gl_FragColor = vec4(col, 1.0);
       }`,
@@ -674,7 +674,7 @@ export function mount() {
     envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat));
     const envRT = pmrem.fromScene(envScene, 0.04);
     scene.environment = envRT.texture;
-    scene.environmentIntensity = 0.55;
+    scene.environmentIntensity = 0.85;
     envScene.children[0].geometry.dispose();
     pmrem.dispose();
     signal.addEventListener('abort', () => envRT.dispose());
@@ -682,14 +682,16 @@ export function mount() {
 
   /* ----- light ----- */
 
-  scene.add(new THREE.HemisphereLight(0x26395e, 0x0c0e14, 0.85));
-  const moon = new THREE.DirectionalLight(0xa8c0ee, 1.55);
+  /* hemisphere ground bounce leans warm — the sodium road kicks light
+     back up, the cheapest GI there is */
+  scene.add(new THREE.HemisphereLight(0x2c4068, 0x191410, 1.15));
+  const moon = new THREE.DirectionalLight(0xa8c0ee, 1.9);
   moon.castShadow = true;
-  moon.shadow.mapSize.setScalar(coarse ? 1024 : 2048);
-  moon.shadow.camera.left = -95;
-  moon.shadow.camera.right = 95;
-  moon.shadow.camera.top = 95;
-  moon.shadow.camera.bottom = -95;
+  moon.shadow.mapSize.setScalar(coarse ? 1024 : 4096);
+  moon.shadow.camera.left = -70;
+  moon.shadow.camera.right = 70;
+  moon.shadow.camera.top = 70;
+  moon.shadow.camera.bottom = -70;
   moon.shadow.camera.near = 20;
   moon.shadow.camera.far = 420;
   moon.shadow.bias = -0.0006;
@@ -1046,13 +1048,20 @@ export function mount() {
   function makeCar() {
     const car = new THREE.Group();
     const body = new THREE.Group();
+    /* readable at night: low metalness so the body answers light with
+       diffuse — full-metal paint only lives off reflections and goes
+       black from the chase view; the clearcoat carries the gloss */
     const paint = new THREE.MeshPhysicalMaterial({
-      color: 0x243250,
-      metalness: 0.85,
-      roughness: 0.34,
+      color: 0x3e5384,
+      metalness: 0.5,
+      roughness: 0.38,
       clearcoat: 1,
       clearcoatRoughness: 0.08,
-      envMapIntensity: 1.3,
+      envMapIntensity: 1.6,
+      /* emissive floor: the hero never goes fully black, whatever the
+         light does — every night racer cheats this way */
+      emissive: 0x16223e,
+      emissiveIntensity: 0.55,
     });
     const trim = new THREE.MeshStandardMaterial({ color: 0x0b0e14, metalness: 0.4, roughness: 0.6 });
     const glass = new THREE.MeshStandardMaterial({
@@ -1060,6 +1069,8 @@ export function mount() {
       metalness: 0.95,
       roughness: 0.08,
       envMapIntensity: 1.8,
+      emissive: 0x101a2e,
+      emissiveIntensity: 0.45,
     });
 
     const chassis = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.52, 4.3), paint);
@@ -1075,7 +1086,7 @@ export function mount() {
       new THREE.MeshStandardMaterial({ color: 0x553311, emissive: SODIUM, emissiveIntensity: 0.9 }),
     );
     stripe.position.y = 0.84;
-    for (const m of [chassis, nose, cabin, spoiler]) m.castShadow = true;
+    for (const m of [chassis, nose, cabin, spoiler]) m.castShadow = m.receiveShadow = true;
     body.add(chassis, nose, cabin, spoiler, stripe);
 
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x223344, emissive: CYANL, emissiveIntensity: 2.6 });
@@ -1112,6 +1123,23 @@ export function mount() {
       if (front) steerPivots.push(pivot);
     }
 
+    /* contact shadow: a soft dark blob under the chassis — the shadow map
+       can't deliver the tight ambient occlusion that visually glues the
+       car to the road */
+    const blob = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.4, 5.8),
+      new THREE.MeshBasicMaterial({
+        map: glowTexture('#000000'),
+        transparent: true,
+        opacity: 0.6,
+        depthWrite: false,
+      }),
+    );
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.y = 0.05;
+    blob.renderOrder = 1;
+    car.add(blob);
+
     /* underglow */
     const glow = new THREE.Mesh(
       new THREE.PlaneGeometry(3.6, 5.6),
@@ -1125,6 +1153,7 @@ export function mount() {
     );
     glow.rotation.x = -Math.PI / 2;
     glow.position.y = 0.06;
+    glow.renderOrder = 2;
     car.add(glow);
 
     /* headlight spots — no volumetric cones: the chase camera looks
@@ -1141,6 +1170,15 @@ export function mount() {
       car.add(s);
       spots.push(s);
     }
+
+    /* hero light: a soft cool fill above the rear — the chase camera
+       always sees the car's unlit side, so without this the hero is a
+       silhouette with tail lights */
+    /* sits camera-side so it lands on the vertical rear panel — directly
+       above the car it only grazes the faces the chase view sees */
+    const fill = new THREE.PointLight(0xa9c4f2, 32, 16, 2);
+    fill.position.set(0, 2.8, -5.2);
+    car.add(fill);
 
     car.add(body);
     car.userData = { body, wheels, steerPivots, tail };
