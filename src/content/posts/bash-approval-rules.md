@@ -78,26 +78,31 @@ export const buildJudgePrompt = (input: {
 
 Three sentences in there carry the design. **"This is routing, not enforcement"** tells the model — and you — which tier it's on: the judge isn't deciding whether a command *may* run, only whether a human needs to look first. **"When unsure, prompt"** sets the prior for every ambiguous case. And the verdict vocabulary has exactly two words. There is no `deny` — the judge is structurally incapable of refusing a command on your behalf; the strongest thing it can do is show you a dialog. Notice also that path containment isn't the only axis: installs, global system state, network access, and broad deletes escalate *even when every path is in bounds*, because those are the categories where "inside the project folder" stops being a useful proxy for "you'd wave it through."
 
-The reply contract is one JSON object, and the parser holds the model to it with cold strictness:
+The reply contract is one JSON object, and the parser holds the model to it with cold strictness — as a Schema, not as hand-rolled parsing:
 
 ```ts title="packages/core/src/usecases/autoApproval.ts"
 // JudgeVerdict = { verdict: 'allow' | 'prompt'; folder?: string; reason?: string }
+const JudgeReply = Schema.parseJson(
+  Schema.Struct({
+    verdict: Schema.Literal('allow', 'prompt'), // [!code highlight]
+    folder: Schema.optional(Schema.String),
+    reason: Schema.optional(Schema.String),
+  }),
+)
+
 export const parseJudgeVerdict = (text: string): JudgeVerdict => {
   const match = text.match(/\{[\s\S]*\}/)
   if (match === null) return { verdict: 'prompt' }
-  try {
-    const parsed = JSON.parse(match[0])
-    return {
-      verdict: parsed.verdict === 'allow' ? 'allow' : 'prompt', // [!code highlight]
-      // … folder + reason ride along when present and non-empty
-    }
-  } catch {
-    return { verdict: 'prompt' }
-  }
+  return Either.match(Schema.decodeUnknownEither(JudgeReply)(match[0]), {
+    onLeft: (): JudgeVerdict => ({ verdict: 'prompt' }),
+    onRight: ({ verdict, folder, reason }): JudgeVerdict => ({
+      verdict, // … folder + reason ride along when present and non-empty
+    }),
+  })
 }
 ```
 
-The highlighted comparison is the parser's entire security posture: the only value that produces an allow is a clean `'allow'`. Prose wrapped around the JSON, a third verdict the model invented, malformed JSON, no JSON at all — every other shape collapses to `prompt`. A confused judge can only ever cause a dialog the human would have seen anyway.
+The highlighted literal is the parser's entire security posture: the only replies that decode at all carry a clean `'allow'` or `'prompt'`. Prose wrapped around the JSON, a third verdict the model invented, a wrong-typed field, malformed JSON, no JSON at all — every other shape lands in `onLeft` and collapses to `prompt`. Notice what's *absent*: there is no `JSON.parse` and no `try/catch`. `Schema.parseJson` subsumes both — a parse failure and a wrong shape are the same decode failure, returned as an `Either` value. Exception machinery stays out of the domain; `Either` is as far as a pure helper ever needs to reach. A confused judge can only ever cause a dialog the human would have seen anyway.
 
 And silent doesn't mean invisible. Each judge allow drops a dim `fast approved: <command> — <reason>` line into the transcript, and the judgment's tokens are billed to the fast role in the session stats. Every prompt that didn't render leaves a receipt.
 

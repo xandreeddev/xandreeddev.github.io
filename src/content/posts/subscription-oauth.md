@@ -167,7 +167,7 @@ Both paths are guarded. The waiter rejects any callback whose `state` doesn't ec
 
 ### The exchange, and what lands on disk
 
-`finishOAuth` swaps the code for tokens and persists in one motion. The exchange itself is a plain POST, with one quiet decision in how the expiry is stored:
+`finishOAuth` swaps the code for tokens and persists in one motion. The exchange itself is a plain POST running inside the adapter's `Effect.tryPromise` — the one place exceptions get to exist, captured at the boundary as a typed failure — with one quiet decision in how the expiry is stored:
 
 ```ts title="packages/adapters/src/auth/oauth/anthropic.ts"
 const data = JSON.parse(text) as {

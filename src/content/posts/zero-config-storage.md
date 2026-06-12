@@ -213,12 +213,18 @@ Here's the part that makes the hatch trustworthy rather than aspirational: **the
 What it costs is SQL portability, and the bill is real. There is no single migration history — there are two dialect-specific ones (ten Postgres migrations, six SQLite), because the engines genuinely differ: `uuid` becomes `TEXT`, `jsonb` becomes a JSON string in `TEXT`, `bigint` becomes `INTEGER`. The stores mirror each other but not literally — the Postgres queries carry `::uuid` and `::jsonb` casts, and the "first user message" preview is `content->>'content'` on Postgres versus `json_extract(content, '$.content')` on SQLite. Even *reading* differs: Postgres hands `jsonb` back as a parsed object, SQLite hands back a string, and one shared codec is the only place that knows:
 
 ```ts title="packages/adapters/src/database/messageCodec.ts"
+// Total: an unparseable string comes back as-is and fails the downstream
+// message schema as the store's tagged error — nothing throws.
+const JsonValue = Schema.parseJson(Schema.Unknown)
+const parseJsonString = (s: string): unknown =>
+  Either.getOrElse(Schema.decodeUnknownEither(JsonValue)(s), () => s)
+
 /**
  * Reassemble a stored (role, content) row for schema decoding. `content` is a
  * JSON *string* in SQLite and an already-parsed object in Postgres (jsonb).
  */
 export const reassembleMessageRow = (role: string, content: unknown): unknown => {
-  const parsed = typeof content === 'string' ? JSON.parse(content) : content // [!code highlight]
+  const parsed = typeof content === 'string' ? parseJsonString(content) : content // [!code highlight]
   return parsed !== null && typeof parsed === 'object'
     ? { role, ...(parsed as Record<string, unknown>) }
     : parsed
