@@ -106,12 +106,24 @@ Rules that keep it healthy:
   `requestPointerLock`; pinch/double-tap zoom is suppressed in world mode (gesture
   events + body `touch-action: none`).
 - Game state: reading a post banks a ⬡ core (`vector-visited`); the ability tree
-  spends them (`vector-tree`); scrap / best score / mute persist in localStorage;
-  the full ship state + session score round-trip article visits and style flips via
-  sessionStorage (`vector-ship`, saved on pagehide and unmount).
-- Portals at the system edge open transit runs — tunnels generated deterministically
-  with `mulberry()` seeded from the portal index (obstacles, boost gates, a warden
-  boss). Never use `Math.random` for anything that must look the same across visits.
+  spends them (`vector-tree`) across three branches — offence / defense / ai (auto
+  modules: sentry turret, igniter burn, missile autoloader, plus support nodes that
+  speed them up) — and is fully resettable for a refund. You start with the base
+  laser + parry only. Scrap / best score / run level (`vector-runlvl`) / mute
+  persist in localStorage; the full ship state + session score round-trip article
+  visits and style flips via sessionStorage (`vector-ship`, saved on pagehide and
+  unmount).
+- Portals at the system edge open transit runs — infinite and procedural: seeded
+  with `mulberry()` from `portal index + run level`, one of four challenge kinds
+  (gauntlet / slalom / hunt / surge), difficulty scaling with the level, ending in
+  a separate free-flight boss arena (the tube group is disposed and rebuilt as the
+  cage). Victory bumps the persistent level and relabels the portals. Never use
+  `Math.random` for anything that must look the same across visits.
+- HUD panels (`.vh-boss` etc.) set `display` explicitly, which beats the UA
+  `[hidden]` rule — every such panel needs an explicit `[hidden] { display: none }`
+  pair. Damage pops and enemy hp bars render with `depthTest: false` — they spawn
+  at the surface of the thing they hit, so depth-tested sprites lose to their own
+  target and never show.
 - Projectile collision is swept (segment-vs-sphere via `sweepHit`), never
   point-sampled — fast bolts tunnel through small targets otherwise.
 - Sound is synthesized WebAudio (`makeAudio`), created lazily on the first user

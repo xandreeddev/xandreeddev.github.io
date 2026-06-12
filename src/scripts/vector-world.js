@@ -4,14 +4,16 @@
    The blog as a star system you fly. The core is the sun; every post is a
    wireframe planet on procedurally laid-out orbit shells (works for any
    number of posts — six per shell, slug-hashed placement). Reading an
-   article banks a ⬡ core to spend in the ability tree (T): guns / drive /
-   hull branches, visible ship components. Asteroids drop scrap and score;
-   interceptors hunt you once your score climbs; portal rings at the system
-   edge open seeded transit runs — a tunnel of obstacles and boost gates
-   with a warden boss at the far end. Ship state and score survive article
-   visits (sessionStorage); best score sticks (localStorage). Synth SFX via
-   WebAudio, M mutes. Article pages keep an ambient field, a "return to
-   system" chip, and esc flies you home.
+   article banks a ⬡ core to spend in the ability tree (T): offence /
+   defense / ai branches, visible ship components, resettable. Asteroids
+   drop scrap and score; interceptors hunt you once your score climbs;
+   portal rings at the system edge open seeded transit runs — infinite,
+   procedural, four challenge kinds, difficulty scaling with a persistent
+   run level — ending in a separate free-flight arena where the warden
+   waits. Ship state and score survive article visits (sessionStorage);
+   best score and run level stick (localStorage). Synth SFX via WebAudio,
+   M mutes. Article pages keep an ambient field, a "return to system"
+   chip, and esc flies you home.
 
    Controls (desktop): click the void to take the stick (pointer lock) —
    mouse aims, W thrusts, S brakes, shift boosts, space / click fires,
@@ -50,22 +52,43 @@ const SCRAP_KEY = 'vector-scrap';
 const TREE_KEY = 'vector-tree';
 const BEST_KEY = 'vector-best';
 const MUTE_KEY = 'vector-mute';
+const RUNLVL_KEY = 'vector-runlvl';
 const SHIP_KEY = 'vector-ship'; // sessionStorage: ship state across page visits
 
 /* the ability tree: reading an article banks one ⬡ core; nodes cost cores
-   and chain within their branch. Hardware ids keep their visible ship parts
-   in makeShip; the rest are pure stat nodes. */
+   and chain within their branch, resettable for a full refund. You start
+   with the base kit only — one laser and the parry. Hardware ids keep
+   their visible ship parts in makeShip; the rest are pure stat nodes. */
 const TREE = [
-  { id: 'twin', branch: 'guns', name: 'twin cannons', desc: 'a second laser muzzle', cost: 1 },
-  { id: 'pods', branch: 'guns', name: 'missile pods', desc: 'unlocks ➤ homing missiles · twin salvo', cost: 1, req: 'twin' },
-  { id: 'lance', branch: 'guns', name: 'lance coils', desc: 'faster, harder bolts', cost: 2, req: 'pods' },
-  { id: 'burner', branch: 'drive', name: 'afterburner', desc: 'unlocks ⚡ boost · faster fuel regen', cost: 1 },
-  { id: 'wings', branch: 'drive', name: 'swept wings', desc: '+30% turn rate', cost: 1, req: 'burner' },
-  { id: 'gyro', branch: 'drive', name: 'reflex gyros', desc: 'sharper turns & brakes · faster ⛨ parry', cost: 2, req: 'wings' },
-  { id: 'shield', branch: 'hull', name: 'deflector ring', desc: 'a 40-pt regenerating shield', cost: 1 },
-  { id: 'gold', branch: 'hull', name: 'gilded hull', desc: '+12 top speed', cost: 1, req: 'shield' },
-  { id: 'reactor', branch: 'hull', name: 'nanoreactor', desc: 'hull self-repairs in flight', cost: 2, req: 'gold' },
+  /* offence: the manual guns */
+  { id: 'twin', branch: 'offence', name: 'twin cannons', desc: 'a second laser muzzle', cost: 1 },
+  { id: 'rapid', branch: 'offence', name: 'rapid coils', desc: '+35% laser fire rate', cost: 1, req: 'twin' },
+  { id: 'velocity', branch: 'offence', name: 'rail accelerators', desc: 'faster, harder bolts', cost: 2, req: 'rapid' },
+  { id: 'pods', branch: 'offence', name: 'missile pods', desc: 'unlocks ➤ homing missiles · twin salvo', cost: 2, req: 'twin' },
+  { id: 'lance', branch: 'offence', name: 'lance coils', desc: '+1 bolt damage · +rate again', cost: 2, req: 'velocity' },
+  /* defense: survive longer, move better */
+  { id: 'shield', branch: 'defense', name: 'deflector cell', desc: 'a 35-pt shield — depletes, then trickles back to ⅓', cost: 1 },
+  { id: 'charges', branch: 'defense', name: 'capacitor bank', desc: '2 reboot charges — a broken shield restarts full', cost: 2, req: 'shield' },
+  { id: 'plating', branch: 'defense', name: 'ablative plating', desc: '+40 max hull', cost: 1 },
+  { id: 'reactor', branch: 'defense', name: 'nanoreactor', desc: 'hull self-repairs in flight · gilded trim', cost: 2, req: 'plating' },
+  { id: 'burner', branch: 'defense', name: 'afterburner', desc: 'unlocks ⚡ boost · faster fuel regen', cost: 1 },
+  { id: 'gyro', branch: 'defense', name: 'reflex gyros', desc: 'sharper turns & brakes · faster ⛨ parry · swept wings', cost: 2, req: 'burner' },
+  /* ai: autonomous modules + the supports that overclock them */
+  { id: 'turret', branch: 'ai', name: 'sentry turret', desc: 'auto-fires at the nearest threat', cost: 1 },
+  { id: 'igniter', branch: 'ai', name: 'plasma igniter', desc: 'sentry bolts set targets burning — damage over time', cost: 2, req: 'turret' },
+  { id: 'automl', branch: 'ai', name: 'missile autoloader', desc: 'launches a homing missile on its own', cost: 2, req: 'turret' },
+  { id: 'overclock', branch: 'ai', name: 'tempo core', desc: 'support: auto modules cycle 35% faster', cost: 1, req: 'turret' },
+  { id: 'swarm', branch: 'ai', name: 'swarm logic', desc: 'support: sentry fires twin bolts · +15% auto rate', cost: 2, req: 'overclock' },
 ];
+
+/* transit run challenge kinds — picked by the run seed */
+const RUN_KINDS = ['gauntlet', 'slalom', 'hunt', 'surge'];
+const KIND_CFG = {
+  gauntlet: { rocks: [56, 10], gates: 8, walls: [0, 0], adds: [0, 0] },
+  slalom: { rocks: [16, 3], gates: 12, walls: [6, 1], adds: [0, 0] },
+  hunt: { rocks: [14, 2], gates: 9, walls: [0, 0], adds: [3, 0.5] },
+  surge: { rocks: [34, 6], gates: 11, walls: [2, 0.5], adds: [0, 0] },
+};
 
 const store = {
   visited() {
@@ -106,6 +129,19 @@ const store = {
     try {
       localStorage.setItem(TREE_KEY, JSON.stringify([...o]));
     } catch {}
+  },
+  resetTree() {
+    try {
+      localStorage.setItem(TREE_KEY, '[]');
+    } catch {}
+  },
+  runLevel(delta = 0) {
+    let n = 0;
+    try {
+      n = Math.max(0, (parseInt(localStorage.getItem(RUNLVL_KEY) ?? '0', 10) || 0) + delta);
+      if (delta) localStorage.setItem(RUNLVL_KEY, String(n));
+    } catch {}
+    return n;
   },
   best(score = 0) {
     let b = 0;
@@ -458,8 +494,8 @@ function makeCore(scale = 1) {
 function makeShip(mods) {
   const ship = new THREE.Group();
   const hull = new THREE.Group();
-  const gold = mods.has('gold');
-  const swept = mods.has('wings');
+  const gold = mods.has('reactor');
+  const swept = mods.has('gyro');
 
   const fuselage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.ConeGeometry(0.55, 2.4, 4)),
@@ -593,6 +629,25 @@ function makeShip(mods) {
     }
   }
 
+  /* sentry turret: a dorsal mount — twin barrels with swarm logic */
+  if (mods.has('turret')) {
+    const base = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(0.36, 0.3, 0.36)),
+      wireMat(CYAN, 0.95),
+    );
+    base.position.set(0, 0.6, 0.45);
+    hull.add(base);
+    const barrels = mods.has('swarm') ? [-0.14, 0.14] : [0];
+    for (const bx of barrels) {
+      const barrel = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.09, 0.09, 0.95)),
+        wireMat(mods.has('igniter') ? AMBER : CYAN, 1),
+      );
+      barrel.position.set(bx, 0.74, 0.05);
+      hull.add(barrel);
+    }
+  }
+
   /* deflector: two crossed rings, animated */
   const shieldRings = [];
   if (mods.has('shield')) {
@@ -638,8 +693,35 @@ function makeEnemyCraft(scale = 1) {
   );
   glow.scale.setScalar(5 * scale);
   e.add(body, ring, glow);
+
+  /* inline hp bar: a fixed dark backing and a left-anchored fill whose
+     x-scale IS the health fraction — no canvas redraws, ever */
+  const w = 3.4 * scale;
+  const bg = new THREE.Sprite(
+    new THREE.SpriteMaterial({ color: 0x140a12, transparent: true, opacity: 0.78, depthWrite: false, depthTest: false }),
+  );
+  bg.scale.set(w, 0.3 * Math.max(1, scale * 0.6), 1);
+  bg.position.y = 2.6 * scale;
+  bg.renderOrder = 7;
+  const fill = new THREE.Sprite(
+    new THREE.SpriteMaterial({ color: MAGENTA, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false }),
+  );
+  fill.center.set(0, 0.5); // anchor left so it drains rightward
+  fill.scale.set(w, 0.22 * Math.max(1, scale * 0.6), 1);
+  fill.position.set(-w / 2, 2.6 * scale, 0);
+  fill.renderOrder = 8;
+  e.add(bg, fill);
+  e.hpBar = { fill, w }; // not userData — callers overwrite that wholesale
   return e;
 }
+
+/* keep an enemy's inline bar in sync — call from its update loop */
+const syncHpBar = (e) => {
+  const u = e.userData;
+  if (!e.hpBar || u?.hp === undefined) return;
+  const frac = THREE.MathUtils.clamp(u.hp / (u.hpMax ?? u.hp ?? 1), 0, 1);
+  e.hpBar.fill.scale.x = Math.max(0.001, e.hpBar.w * frac);
+};
 
 /* ----- portals: rings at the system edge that open transit runs ----- */
 
@@ -664,13 +746,8 @@ function makePortal(idx) {
   );
   glow.scale.setScalar(34);
   g.add(ring, inner, glow);
-  const label = textSprite(
-    [`⌬ transit ${String(idx + 1).padStart(2, '0')}`, 'fly through — survive the run'],
-    { color: '#6ad8ff' },
-  );
-  label.position.y = 17;
-  g.add(label);
-  g.userData = { ring, inner, label };
+  /* the label is level-aware — relabelPortals() owns it */
+  g.userData = { ring, inner, label: null, idx };
   return g;
 }
 
@@ -696,6 +773,7 @@ const HELP_WORLD =
   'mouse aim · W thrust · shift boost · space fire · E missile · Q parry · S brake · T tree · M sound · esc release';
 const HELP_RUN =
   'steer across the tube · shift boost · S brake · space fire · E missile · Q parry';
+const HELP_ARENA = 'free flight — bring the warden down · space fire · E missile · Q parry';
 
 function makeHud(n) {
   const hud = document.createElement('div');
@@ -704,11 +782,12 @@ function makeHud(n) {
     <div class="vh-cross" aria-hidden="true"></div>
     <div class="vh-bars" aria-hidden="true">
       <div class="vh-bar-row"><span>hull</span><div class="vh-bar"><i data-vh-hp style="width:100%"></i></div></div>
-      <div class="vh-bar-row" data-vh-shield-row hidden><span>shield</span><div class="vh-bar shield"><i data-vh-shield style="width:100%"></i></div></div>
+      <div class="vh-bar-row" data-vh-shield-row hidden><span>shield</span><div class="vh-bar shield"><i data-vh-shield style="width:100%"></i></div><em data-vh-charges></em></div>
       <div class="vh-bar-row"><span>boost</span><div class="vh-bar boost"><i data-vh-boost style="width:100%"></i></div></div>
       <div class="vh-stats" data-vh-stats></div>
     </div>
     <div class="vh-top" data-vh-top aria-hidden="true">system xandreed · ${n} planets</div>
+    <div class="vh-boss" data-vh-boss hidden aria-hidden="true"><span data-vh-boss-name>⌬ THE WARDEN</span><div><i data-vh-boss-fill></i></div></div>
     <div class="vh-corner">
       <button type="button" data-vh-tree-btn>⬡ tree</button>
       <button type="button" data-vh-mute aria-label="Toggle sound"></button>
@@ -718,9 +797,9 @@ function makeHud(n) {
     <div class="vh-toasts" data-vh-toasts aria-live="polite"></div>
     <div class="vh-dock" data-vh-dock hidden></div>
     <div class="vh-tree" data-vh-tree hidden>
-      <div class="vh-tree-head"><b>⬡ ability tree</b><span data-vh-cores></span><button type="button" data-vh-tree-close>✕ close</button></div>
+      <div class="vh-tree-head"><b>⬡ ability tree</b><span data-vh-cores></span><button type="button" data-vh-tree-reset>↺ reset</button><button type="button" data-vh-tree-close>✕ close</button></div>
       <div class="vh-tree-grid" data-vh-tree-grid></div>
-      <p class="vh-tree-hint">reading an article banks one ⬡ core · installed components persist</p>
+      <p class="vh-tree-hint">reading an article banks one ⬡ core · ↺ reset refunds everything</p>
     </div>
     <div class="vh-help" data-vh-help aria-hidden="true">${HELP_WORLD}</div>
     <div class="vh-overlay" data-vh-overlay><b>❯ take the stick</b><span>${
@@ -826,25 +905,37 @@ export function mount() {
   /* derived ship stats — recomputed in place when a tree node is bought.
      each weapon scales independently: damage, projectile speed, fire rate.
      bolt speed also inherits ship speed, and boosting raises fire rate. */
+  const autoRate = () =>
+    (owned.has('overclock') ? 0.65 : 1) * (owned.has('swarm') ? 0.85 : 1);
   const calcStats = () => ({
-    maxHp: 100,
-    turn: (owned.has('wings') ? 1.3 : 1) + (owned.has('gyro') ? 0.25 : 0),
-    vmax: 60 + (owned.has('gold') ? 12 : 0),
+    maxHp: 100 + (owned.has('plating') ? 40 : 0),
+    turn: (owned.has('gyro') ? 1.45 : 1),
+    vmax: 60 + (owned.has('gyro') ? 8 : 0),
     hasBoost: owned.has('burner'), // boost is an equipped ability, not a given
     boostAcc: 86,
     fuelRegen: owned.has('burner') ? 30 : 18,
-    shieldMax: owned.has('shield') ? 40 : 0,
-    shieldRegen: 12, // per second, after 4s without taking a hit
+    /* the deflector depletes; it only trickles back to a third on its own —
+       full restores come from reboot charges or docking */
+    shieldMax: owned.has('shield') ? 35 : 0,
+    shieldRegen: 4, // trickle per second, after 7s without taking a hit
+    shieldChargesMax: owned.has('charges') ? 2 : 0,
     hasMissiles: owned.has('pods'), // so is the launcher
     missileCooldown: 1.6,
     missileDmg: 4,
     missileVmax: 150,
-    fireDelay: owned.has('lance') ? 0.11 : 0.15,
-    boltDmg: owned.has('lance') ? 2 : 1,
-    boltSpeed: owned.has('lance') ? 275 : 220,
+    fireDelay: owned.has('lance') ? 0.085 : owned.has('rapid') ? 0.11 : 0.15,
+    boltDmg: 1 + (owned.has('velocity') ? 1 : 0) + (owned.has('lance') ? 1 : 0),
+    boltSpeed: 220 + (owned.has('velocity') ? 60 : 0) + (owned.has('lance') ? 25 : 0),
     brake: owned.has('gyro') ? 4.6 : 3.2,
     parryCd: owned.has('gyro') ? 2.2 : 3.2,
     regen: owned.has('reactor') ? 2.2 : 0,
+    /* ai modules — support nodes shorten every auto cycle */
+    hasTurret: owned.has('turret'),
+    hasIgnite: owned.has('igniter'),
+    hasAutoMissile: owned.has('automl'),
+    turretRate: 1.7 * autoRate(),
+    turretBurst: owned.has('swarm') ? 2 : 1,
+    autoMissileRate: 7 * autoRate(),
   });
   const stats = calcStats();
 
@@ -866,6 +957,11 @@ export function mount() {
   let hp = stats.maxHp;
   let shield = stats.shieldMax;
   let shieldHitT = 99; // seconds since the shield last took a hit
+  let shieldCharges = stats.shieldChargesMax;
+  let shieldRebootT = 0; // counts down to a charge-powered full restart
+  let autoT = 1.5; // sentry turret cycle
+  let amlT = 3; // missile autoloader cycle
+  let amlSide = 1;
   let fuel = 100;
   let scrap = store.scrap(0);
   let score = 0;
@@ -886,22 +982,30 @@ export function mount() {
   let mouseDX = 0;
   let mouseDY = 0;
   let enemyT = 22; // grace period before the first interceptor
-  /* transit run state: active while flying a portal tunnel */
+  /* transit run state: active while flying a portal tunnel or its arena */
   const run = {
     active: false,
     idx: 0,
+    level: 0,
+    kind: 'gauntlet',
+    phase: 'tube', // 'tube' on the rail → 'arena' free-flight boss fight
     group: null,
     curve: null,
     len: 1,
     t: 0,
+    prevT: 0,
     speed: 40,
+    base: 42,
     off: new THREE.Vector2(),
     offV: new THREE.Vector2(),
     rocks: [],
     boosts: [],
+    walls: [],
+    adds: [],
     boss: null,
-    bossPhase: false,
+    arenaC: new THREE.Vector3(),
   };
+  const ARENA_R = 95;
   const audio = makeAudio();
   const keys = { thrust: false, brake: false, boost: false, fire: false, roll: 0 };
   const pointer = new THREE.Vector2(0, 0);
@@ -1073,7 +1177,7 @@ export function mount() {
       ship.position.y + (Math.random() - 0.5) * 40,
       ship.position.z + Math.sin(a) * d,
     );
-    e.userData = { vel: new THREE.Vector3(), hp: 3, fireCd: 2.5, radius: 2.2 };
+    e.userData = { vel: new THREE.Vector3(), hp: 3, hpMax: 3, fireCd: 2.5, radius: 2.2 };
     worldGroup.add(e);
     enemies.push(e);
     hud?.toast('◬ interceptor inbound', 'warn');
@@ -1115,18 +1219,22 @@ export function mount() {
     }
   }
 
-  /* floating damage numbers: pooled canvas sprites, redrawn on spawn */
+  /* floating damage numbers: pooled canvas sprites, redrawn on spawn.
+     depthTest off — a pop spawns at the surface of the thing it hit, so
+     depth-tested sprites lose to their own target and never show */
   const pops = [];
+  const popV = new THREE.Vector3();
   function makePopPool(n) {
     for (let i = 0; i < n; i++) {
       const c = document.createElement('canvas');
-      c.width = 128;
-      c.height = 64;
+      c.width = 160;
+      c.height = 80;
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
       const s = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }),
+        new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }),
       );
+      s.renderOrder = 9;
       s.visible = false;
       scene.add(s);
       pops.push({ s, c, tex, life: 0 });
@@ -1137,15 +1245,41 @@ export function mount() {
     const p = pops.find((x) => x.life <= 0) ?? pops[0];
     if (!p) return;
     const ctx = p.c.getContext('2d');
-    ctx.clearRect(0, 0, 128, 64);
-    ctx.font = '46px VT323, monospace';
+    ctx.clearRect(0, 0, 160, 80);
+    ctx.font = '58px VT323, monospace';
     ctx.textAlign = 'center';
+    ctx.lineWidth = 9;
+    ctx.strokeStyle = 'rgba(2, 14, 9, 0.9)';
+    ctx.strokeText(String(amount), 80, 56);
     ctx.fillStyle = color;
-    ctx.fillText(String(amount), 64, 44);
+    ctx.fillText(String(amount), 80, 56);
     p.tex.needsUpdate = true;
-    p.s.position.copy(pos);
+    /* float it toward the camera so the target's own wireframe can't sit on it */
+    p.s.position.copy(pos).addScaledVector(popV.copy(camera.position).sub(pos).normalize(), 3);
     p.s.visible = true;
-    p.life = 0.8;
+    p.life = 1.05;
+  }
+
+  /* plasma igniter: a burning target ticks damage over time, with a flame */
+  function igniteTarget(obj) {
+    const u = obj.userData;
+    if (!u) return;
+    u.burn = 3.2;
+    u.burnAcc = u.burnAcc ?? 0;
+    if (!u.burnFx) {
+      const fx = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: glowTexture('#ff8a4a'),
+          transparent: true,
+          opacity: 0.8,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      fx.scale.setScalar((u.radius ?? 2) * 2.4);
+      obj.add(fx);
+      u.burnFx = fx;
+    }
   }
 
   /* parry: base ability — a timed window that throws enemy bolts back */
@@ -1195,9 +1329,71 @@ export function mount() {
       else b.dir.set(0, 0, -1).applyQuaternion(ship.quaternion);
       b.speed = stats.boltSpeed + shipSpeed * 0.6;
       b.life = 1.1;
+      b.dmg = stats.boltDmg;
+      b.ignite = false;
+      b.line.material.color.set(GREEN);
       b.line.visible = true;
     }
     audio.laser();
+  }
+
+  /* sentry turret: picks its own target, fires its own bolts (amber) */
+  function pickAutoTarget() {
+    const near = (list, max) => {
+      let bd = max;
+      let hit = null;
+      for (const o of list) {
+        const d = o.position.distanceTo(ship.position);
+        if (d < bd) {
+          bd = d;
+          hit = o;
+        }
+      }
+      return hit;
+    };
+    if (run.active)
+      return run.boss ?? near(run.adds, 220) ?? near(run.rocks, 70);
+    return near(enemies, 230) ?? near(asteroids, 110);
+  }
+
+  const turretLocal = new THREE.Vector3();
+  function fireTurret(tgt) {
+    for (let k = 0; k < stats.turretBurst; k++) {
+      const b = bolts.find((x) => x.life <= 0);
+      if (!b) return;
+      b.pos.copy(ship.localToWorld(turretLocal.set(k === 0 ? -0.14 : 0.14, 0.74, -0.2)));
+      b.dir.copy(tgt.position).sub(b.pos).normalize();
+      b.dir.x += (Math.random() - 0.5) * 0.03;
+      b.dir.y += (Math.random() - 0.5) * 0.03;
+      b.dir.normalize();
+      b.speed = 250;
+      b.life = 1.1;
+      b.dmg = 1;
+      b.ignite = stats.hasIgnite;
+      b.line.material.color.set(stats.hasIgnite ? AMBER : CYAN);
+      b.line.visible = true;
+    }
+    audio.tick();
+  }
+
+  function spawnMissile(sx, target) {
+    /* on the tube rail the ship's velocity lives in run.speed, not vel */
+    const inherit =
+      run.active && run.phase === 'tube'
+        ? new THREE.Vector3(0, 0, -run.speed).applyQuaternion(ship.quaternion)
+        : vel;
+    const g = new THREE.Group();
+    const body = new THREE.Sprite(missileMat);
+    body.scale.setScalar(1.6);
+    g.add(body);
+    g.position.copy(ship.localToWorld(new THREE.Vector3(sx, -0.5, 0.4)));
+    g.userData = {
+      vel: new THREE.Vector3(sx * 6, -2, -46).applyQuaternion(ship.quaternion).add(inherit),
+      target,
+      life: 6,
+    };
+    scene.add(g);
+    missiles.push(g);
   }
 
   function fireMissile() {
@@ -1211,25 +1407,7 @@ export function mount() {
       return;
     }
     missileCd = stats.missileCooldown;
-    const tubes = [1.05, -1.05];
-    /* in a transit run the ship's velocity lives in run.speed, not vel */
-    const inherit = run.active
-      ? new THREE.Vector3(0, 0, -run.speed).applyQuaternion(ship.quaternion)
-      : vel;
-    for (const sx of tubes) {
-      const g = new THREE.Group();
-      const body = new THREE.Sprite(missileMat);
-      body.scale.setScalar(1.6);
-      g.add(body);
-      g.position.copy(ship.localToWorld(new THREE.Vector3(sx, -0.5, 0.4)));
-      g.userData = {
-        vel: new THREE.Vector3(sx * 6, -2, -46).applyQuaternion(ship.quaternion).add(inherit),
-        target: lockTgt,
-        life: 6,
-      };
-      scene.add(g);
-      missiles.push(g);
-    }
+    for (const sx of [1.05, -1.05]) spawnMissile(sx, lockTgt);
     audio.missile();
   }
 
@@ -1238,7 +1416,17 @@ export function mount() {
     if (score > best) best = store.best(score);
   }
 
+  /* a dead burning thing takes its flame's material with it */
+  function dropBurnFx(obj) {
+    const u = obj.userData;
+    if (u?.burnFx) {
+      u.burnFx.material.dispose();
+      u.burnFx = null;
+    }
+  }
+
   function killAsteroid(rock) {
+    dropBurnFx(rock);
     explode(rock.position, AMBER);
     audio.boom(false);
     worldGroup.remove(rock);
@@ -1251,6 +1439,7 @@ export function mount() {
   }
 
   function killEnemy(e) {
+    dropBurnFx(e);
     explode(e.position, '#ff5fd2');
     audio.boom(true);
     worldGroup.remove(e);
@@ -1271,6 +1460,11 @@ export function mount() {
       shield -= absorbed;
       amount -= absorbed;
       for (const r of ship?.userData.shieldRings ?? []) r.material.opacity = 0.95;
+      if (ship) popDamage(ship.position, absorbed, '#6ad8ff');
+      if (shield <= 0) {
+        shieldRebootT = 3;
+        hud?.toast(shieldCharges > 0 ? '⛉ shield down — rebooting' : '⛉ shield down', 'warn');
+      }
       if (amount <= 0) {
         invuln = 0.35;
         shake = Math.min(1.2, shake + 0.3);
@@ -1279,10 +1473,12 @@ export function mount() {
       }
     }
     hp = Math.max(0, hp - amount);
+    if (ship) popDamage(ship.position, amount, '#ff7a7a');
     invuln = 0.9;
     shake = Math.min(1.2, shake + 0.7);
     audio.hit();
-    if (sourcePos && ship && !run.active) {
+    /* knockback applies wherever flight is free — world and arena both */
+    if (sourcePos && ship && (!run.active || run.phase === 'arena')) {
       const knock = ship.position.clone().sub(sourcePos).normalize().multiplyScalar(16);
       vel.add(knock);
     }
@@ -1308,6 +1504,7 @@ export function mount() {
 
   /* path frame at parameter t — shared scratch, finish reading before
      calling again */
+  const tmpV3w = new THREE.Vector3(); // run-builder scratch
   const F = { tan: new THREE.Vector3(), right: new THREE.Vector3(), up: new THREE.Vector3() };
   const frameAt = (t) => {
     run.curve.getTangentAt(t, F.tan);
@@ -1318,25 +1515,51 @@ export function mount() {
     return F;
   };
 
+  /* a tube rock, shared by startRun's generator */
+  const makeTubeRock = (radius, seed) => {
+    const rock = new THREE.Group();
+    rock.add(
+      new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 0.62, 8, 6),
+        new THREE.MeshBasicMaterial({ color: BG }),
+      ),
+      new THREE.LineSegments(
+        new THREE.WireframeGeometry(jitter(new THREE.IcosahedronGeometry(radius, 0), seed)),
+        wireMat(0x8de8b8, 0.55),
+      ),
+    );
+    return rock;
+  };
+
   function startRun(idx) {
+    const level = store.runLevel();
+    const rnd = mulberry(hash32(`transit-${idx}-L${level}`));
+    const kind = RUN_KINDS[Math.floor(rnd() * RUN_KINDS.length)];
+    const cfg = KIND_CFG[kind];
     run.active = true;
     run.idx = idx;
+    run.level = level;
+    run.kind = kind;
+    run.phase = 'tube';
     run.t = 0;
-    run.speed = 40;
+    run.prevT = 0;
+    run.base = kind === 'surge' ? 54 : 42;
+    run.speed = run.base - 2;
     run.off.set(0, 0);
     run.offV.set(0, 0);
-    run.bossPhase = false;
     run.boss = null;
     run.rocks = [];
     run.boosts = [];
+    run.walls = [];
+    run.adds = [];
     run.group = new THREE.Group();
 
-    const rnd = mulberry(hash32(`transit-${idx}`));
-    /* the path wanders outward from the portal */
+    /* the path wanders outward from the portal — longer at depth */
+    const segs = 34 + Math.min(14, level * 2);
     const pts = [];
     const p = ship.position.clone();
     const heading = p.clone().normalize();
-    for (let i = 0; i < 34; i++) {
+    for (let i = 0; i < segs; i++) {
       p.addScaledVector(heading, 46);
       heading.applyAxisAngle(UP, (rnd() - 0.5) * 0.55);
       heading.y = THREE.MathUtils.clamp(heading.y + (rnd() - 0.5) * 0.3, -0.35, 0.35);
@@ -1347,14 +1570,15 @@ export function mount() {
     run.len = run.curve.getLength();
 
     /* tube rings */
+    const rings = Math.min(100, 70 + level * 3);
     const ringGeo = new THREE.BufferGeometry().setFromPoints(
       Array.from({ length: 25 }, (_, k) => {
         const a = (k / 24) * Math.PI * 2;
         return new THREE.Vector3(Math.cos(a) * 13, Math.sin(a) * 13, 0);
       }),
     );
-    for (let i = 0; i < 70; i++) {
-      const t = i / 69;
+    for (let i = 0; i < rings; i++) {
+      const t = i / (rings - 1);
       const ring = new THREE.Line(
         ringGeo,
         wireMat(i % 7 === 0 ? MAGENTA : GREEN_DIM, i % 7 === 0 ? 0.55 : 0.32),
@@ -1364,19 +1588,13 @@ export function mount() {
       run.group.add(ring);
     }
 
-    /* obstacles: rocks floating in the tube */
-    for (let i = 0; i < 42; i++) {
+    /* obstacles: rocks floating in the tube; deeper levels set some adrift */
+    const rockN = Math.min(120, cfg.rocks[0] + cfg.rocks[1] * level);
+    const driftN = level >= 2 ? Math.min(14, 2 + level * 2) : 0;
+    for (let i = 0; i < rockN; i++) {
       const t = 0.05 + rnd() * 0.88;
       const radius = 1.4 + rnd() * 2.2;
-      const geo = jitter(new THREE.IcosahedronGeometry(radius, 0), rnd() * 100);
-      const rock = new THREE.Group();
-      rock.add(
-        new THREE.Mesh(
-          new THREE.SphereGeometry(radius * 0.62, 8, 6),
-          new THREE.MeshBasicMaterial({ color: BG }),
-        ),
-        new THREE.LineSegments(new THREE.WireframeGeometry(geo), wireMat(0x8de8b8, 0.55)),
-      );
+      const rock = makeTubeRock(radius, rnd() * 100);
       const f = frameAt(t);
       const a = rnd() * Math.PI * 2;
       const rr = rnd() * 9;
@@ -1385,13 +1603,81 @@ export function mount() {
         .addScaledVector(f.right, Math.cos(a) * rr)
         .addScaledVector(f.up, Math.sin(a) * rr);
       rock.userData = { radius, hp: Math.ceil(radius) };
+      if (i < driftN)
+        rock.userData.dyn = {
+          t,
+          x: Math.cos(a) * rr,
+          y: Math.sin(a) * rr,
+          vx: (rnd() - 0.5) * 7,
+          vy: (rnd() - 0.5) * 7,
+        };
       run.group.add(rock);
       run.rocks.push(rock);
     }
 
+    /* walls: ring barriers with one open sector — thread the gap */
+    const wallN = Math.min(14, Math.floor(cfg.walls[0] + cfg.walls[1] * level));
+    for (let i = 0; i < wallN; i++) {
+      const t = 0.12 + ((i + rnd() * 0.5) / wallN) * 0.78;
+      const gapA = rnd() * Math.PI * 2;
+      const gapW = Math.max(0.38, 0.6 - level * 0.02);
+      const wall = new THREE.Group();
+      for (const wr of [3.5, 6.5, 9.5, 12.2]) {
+        const arc = [];
+        const steps = 36;
+        for (let k = 0; k <= steps; k++) {
+          const a = gapA + gapW + (k / steps) * (Math.PI * 2 - gapW * 2);
+          arc.push(new THREE.Vector3(Math.cos(a) * wr, Math.sin(a) * wr, 0));
+        }
+        wall.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(arc), wireMat(MAGENTA, 0.7)));
+      }
+      /* amber ticks mark the opening */
+      for (const ga of [gapA - gapW, gapA + gapW]) {
+        const tick = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(Math.cos(ga) * 3.5, Math.sin(ga) * 3.5, 0),
+            new THREE.Vector3(Math.cos(ga) * 12.2, Math.sin(ga) * 12.2, 0),
+          ]),
+          wireMat(AMBER, 0.9),
+        );
+        wall.add(tick);
+      }
+      const f = frameAt(t);
+      wall.position.copy(run.curve.getPointAt(t));
+      wall.lookAt(tmpV3w.copy(wall.position).add(f.tan));
+      run.group.add(wall);
+      run.walls.push({ t, gapA, gapW, group: wall });
+    }
+
+    /* hunt: sentry interceptors stationed along the tube */
+    const addN = Math.min(8, Math.floor(cfg.adds[0] + cfg.adds[1] * level));
+    for (let i = 0; i < addN; i++) {
+      const t = 0.2 + (i / Math.max(1, addN - 1)) * 0.6;
+      const e = makeEnemyCraft(1);
+      const f = frameAt(t);
+      const a = rnd() * Math.PI * 2;
+      e.position
+        .copy(run.curve.getPointAt(t))
+        .addScaledVector(f.right, Math.cos(a) * 7)
+        .addScaledVector(f.up, Math.sin(a) * 7);
+      const addHp = 3 + Math.floor(level / 2);
+      e.userData = {
+        vel: new THREE.Vector3(),
+        hp: addHp,
+        hpMax: addHp,
+        fireCd: 1.2 + rnd(),
+        radius: 2.2,
+        station: t,
+        base: e.position.clone(),
+        phase: rnd() * 6,
+      };
+      run.group.add(e);
+      run.adds.push(e);
+    }
+
     /* boost gates: amber rings — thread them for speed, fuel and score */
-    for (let i = 0; i < 9; i++) {
-      const t = 0.07 + (i / 9) * 0.84 + rnd() * 0.04;
+    for (let i = 0; i < cfg.gates; i++) {
+      const t = 0.07 + (i / cfg.gates) * 0.84 + rnd() * 0.04;
       const gate = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.TorusGeometry(4.4, 0.12, 3, 28)),
         wireMat(AMBER, 0.9),
@@ -1425,17 +1711,64 @@ export function mount() {
     hud?.els?.cluster?.setAttribute('data-run', '');
     if (hud?.els?.help) hud.els.help.textContent = HELP_RUN;
     audio.portal();
-    hud?.toast(`⌬ transit ${String(idx + 1).padStart(2, '0')} — survive to the warden`, 'warn');
+    hud?.toast(`⌬ L${level + 1} ${kind} — survive to the warden`, 'warn');
+  }
+
+  /* the warden waits in its own space: a caged free-flight arena past the
+     tunnel mouth, not a turret duel on the rail */
+  function enterArena() {
+    run.phase = 'arena';
+    scene.remove(run.group);
+    disposeObject(run.group);
+    run.rocks = [];
+    run.boosts = [];
+    run.walls = [];
+    run.adds = [];
+    run.group = new THREE.Group();
+    run.arenaC.set(0, 260, 0); // worldGroup is hidden — high above its plane
+    const cage = new THREE.LineSegments(
+      new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(ARENA_R, 2)),
+      wireMat(CYAN, 0.14),
+    );
+    const cage2 = new THREE.LineSegments(
+      new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(ARENA_R * 0.5, 1)),
+      wireMat(MAGENTA, 0.08),
+    );
+    cage.position.copy(run.arenaC);
+    cage2.position.copy(run.arenaC);
+    run.group.add(cage, cage2);
+    scene.add(run.group);
+    ship.position.copy(run.arenaC).add(tmpV3w.set(0, 0, ARENA_R * 0.72));
+    ship.lookAt(run.arenaC);
+    ship.rotateY(Math.PI); // nose is -z
+    vel.set(0, 0, 0);
+    run.off.set(0, 0);
+    run.offV.set(0, 0);
+    /* free flight again: full controls return */
+    hud?.els?.cluster?.removeAttribute('data-run');
+    if (hud?.els?.help) hud.els.help.textContent = HELP_ARENA;
+    spawnBoss();
+    audio.portal();
   }
 
   function spawnBoss() {
     run.boss = makeEnemyCraft(3.4);
-    const f = frameAt(0.96);
-    run.boss.position.copy(run.curve.getPointAt(0.96)).addScaledVector(f.tan, 55);
-    run.boss.userData = { hp: 26, vel: new THREE.Vector3(), fireCd: 1.4, phase: 0, radius: 5 };
+    run.boss.position.copy(run.arenaC).add(tmpV3w.set(0, 6, -30));
+    const hp = 80 + run.level * 35;
+    run.boss.userData = {
+      hp,
+      hpMax: hp,
+      vel: new THREE.Vector3(),
+      fireCd: 1.6,
+      phase: 0,
+      mode: 'orbit',
+      modeT: 4,
+      addsSpawned: false,
+      radius: 5,
+    };
     run.group.add(run.boss);
     audio.boss();
-    hud?.toast('⌬ THE WARDEN — bring it down', 'bad');
+    hud?.toast(`⌬ THE WARDEN · L${run.level + 1} — bring it down`, 'bad');
   }
 
   function hurtBoss(dmg, at) {
@@ -1449,6 +1782,18 @@ export function mount() {
     }
   }
 
+  function killAdd(e) {
+    dropBurnFx(e);
+    explode(e.position, '#ff5fd2');
+    audio.boom(true);
+    run.group?.remove(e);
+    const i = run.adds.indexOf(e);
+    if (i >= 0) run.adds.splice(i, 1);
+    if (lockTgt === e) lockTgt = null;
+    scrap = store.scrap(2);
+    addScore(120);
+  }
+
   function endRun(victory) {
     run.active = false;
     run.boss = null;
@@ -1459,6 +1804,8 @@ export function mount() {
     }
     run.rocks = [];
     run.boosts = [];
+    run.walls = [];
+    run.adds = [];
     for (const b of ebolts) {
       b.life = 0;
       b.line.visible = false;
@@ -1477,10 +1824,36 @@ export function mount() {
       vel.set(0, 0, 0);
     }
     if (victory) {
-      scrap = store.scrap(8);
-      addScore(600);
+      const gain = 600 + run.level * 200;
+      const sc = 8 + run.level * 3;
+      scrap = store.scrap(sc);
+      addScore(gain);
+      store.runLevel(1); // every portal gets harder from here on
+      relabelPortals();
       audio.chime();
-      hud?.toast('⌬ warden destroyed — +600 · +8 scrap', 'ok');
+      hud?.toast(`⌬ warden L${run.level + 1} down — +${gain} · +${sc} scrap · transit level up`, 'ok');
+    }
+  }
+
+  /* portal labels carry the live run level + seeded challenge kind */
+  function relabelPortals() {
+    const level = store.runLevel();
+    for (const p of portals) {
+      const rnd = mulberry(hash32(`transit-${p.userData.idx}-L${level}`));
+      const kind = RUN_KINDS[Math.floor(rnd() * RUN_KINDS.length)];
+      const old = p.userData.label;
+      if (old) {
+        p.remove(old);
+        old.material.map?.dispose();
+        old.material.dispose();
+      }
+      const label = textSprite(
+        [`⌬ transit ${String(p.userData.idx + 1).padStart(2, '0')} · L${level + 1}`, `${kind} run — fly through`],
+        { color: '#6ad8ff' },
+      );
+      label.position.y = 17;
+      p.add(label);
+      p.userData.label = label;
     }
   }
 
@@ -1494,6 +1867,7 @@ export function mount() {
       v: vel.toArray(),
       hp,
       shield,
+      c: shieldCharges,
       fuel,
       score,
       t: Date.now(),
@@ -1517,7 +1891,7 @@ export function mount() {
     const coresEl = hud?.querySelector('[data-vh-cores]');
     if (!grid) return;
     if (coresEl) coresEl.textContent = `⬡ ${cores} core${cores === 1 ? '' : 's'} banked`;
-    grid.innerHTML = ['guns', 'drive', 'hull']
+    grid.innerHTML = ['offence', 'defense', 'ai']
       .map(
         (br) => `
       <div class="vh-branch">
@@ -1548,10 +1922,28 @@ export function mount() {
     store.own(id);
     Object.assign(stats, calcStats());
     if (id === 'shield') shield = stats.shieldMax;
+    if (id === 'charges') shieldCharges = stats.shieldChargesMax;
     rebuildShip();
     syncCluster();
     audio.chime();
     hud?.toast(`component installed: ${n.name}`, 'ok');
+    renderTree();
+  }
+
+  /* respec: tear it all out, every core comes back */
+  function resetTree() {
+    if (!owned.size) return;
+    store.resetTree();
+    owned.clear();
+    cores = visited.size;
+    Object.assign(stats, calcStats());
+    shield = 0;
+    shieldCharges = 0;
+    hp = Math.min(hp, stats.maxHp);
+    rebuildShip();
+    syncCluster();
+    audio.tick();
+    hud?.toast('tree reset — every ⬡ core refunded', 'ok');
     renderTree();
   }
 
@@ -1617,10 +2009,10 @@ export function mount() {
 
     const rockCount = Math.min(40, 20 + posts.length * 2);
     for (let i = 0; i < rockCount; i++) spawnAsteroid();
-    makeBoltPool(24);
-    makeEboltPool(16);
+    makeBoltPool(30);
+    makeEboltPool(20);
     makeBoomPool(8);
-    makePopPool(12);
+    makePopPool(24);
 
     /* chronological route: a dashed path threading the planets oldest →
        newest; flow dots drift along it showing the direction of time */
@@ -1679,6 +2071,7 @@ export function mount() {
       worldGroup.add(p);
       portals.push(p);
     }
+    relabelPortals();
 
     lockReticle = new THREE.LineLoop(
       new THREE.BufferGeometry().setFromPoints([
@@ -1705,6 +2098,7 @@ export function mount() {
         vel.fromArray(saved.v);
         hp = Math.min(stats.maxHp, saved.hp ?? stats.maxHp);
         shield = Math.min(stats.shieldMax, saved.shield ?? stats.shieldMax);
+        shieldCharges = Math.min(stats.shieldChargesMax, saved.c ?? stats.shieldChargesMax);
         fuel = saved.fuel ?? 100;
         score = saved.score ?? 0;
         if (score > best) best = store.best(score);
@@ -1755,11 +2149,15 @@ export function mount() {
       hp: hud.querySelector('[data-vh-hp]'),
       shieldRow: hud.querySelector('[data-vh-shield-row]'),
       shield: hud.querySelector('[data-vh-shield]'),
+      charges: hud.querySelector('[data-vh-charges]'),
       boost: hud.querySelector('[data-vh-boost]'),
       stats: hud.querySelector('[data-vh-stats]'),
       lock: hud.querySelector('[data-vh-lock]'),
       weap: hud.querySelector('[data-vh-weap]'),
       top: hud.querySelector('[data-vh-top]'),
+      boss: hud.querySelector('[data-vh-boss]'),
+      bossName: hud.querySelector('[data-vh-boss-name]'),
+      bossFill: hud.querySelector('[data-vh-boss-fill]'),
       dock: hud.querySelector('[data-vh-dock]'),
       help: hud.querySelector('[data-vh-help]'),
       cluster: hud.querySelector('[data-vh-cluster]'),
@@ -2135,6 +2533,7 @@ export function mount() {
       (e) => {
         const node = e.target.closest?.('[data-node]');
         if (node) buyNode(node.dataset.node);
+        else if (e.target.closest?.('[data-vh-tree-reset]')) resetTree();
         else if (e.target.closest?.('[data-vh-tree-close]')) toggleTree(false);
       },
       { signal },
@@ -2167,8 +2566,9 @@ export function mount() {
     return segV.lengthSq() < radius * radius;
   };
 
-  /* world mode: free flight among the planets */
-  function updateWorld(dt, time) {
+  /* free flight: steering + thrust, shared by world mode and the arena.
+     Returns fwd held in tmpV — callers must respect the scratch rules. */
+  function applyFreeFlight(dt) {
     /* --- steering --- */
     if (pointerLocked) {
       ship.rotateY(-mouseDX * 0.0022 * stats.turn);
@@ -2208,6 +2608,12 @@ export function mount() {
     if (vel.length() > vmax) vel.setLength(vmax);
     ship.position.addScaledVector(vel, dt);
     audio.thrust(keys.thrust, boosting);
+    return fwd;
+  }
+
+  /* world mode: free flight among the planets */
+  function updateWorld(dt, time) {
+    const fwd = applyFreeFlight(dt);
 
     const r = ship.position.length();
     if (r > 620) vel.addScaledVector(tmpV2.copy(ship.position).normalize(), -dt * 40);
@@ -2249,6 +2655,7 @@ export function mount() {
       en.position.addScaledVector(u.vel, dt);
       en.lookAt(ship.position);
       en.rotateY(Math.PI); // nose is -z
+      syncHpBar(en);
       u.fireCd -= dt;
       if (u.fireCd <= 0 && dist < 180) {
         u.fireCd = 1.6 + Math.random() * 0.9;
@@ -2313,7 +2720,11 @@ export function mount() {
 
     const wasDocked = docked;
     docked = nearest >= 0 && nearestD < planets[nearest].radius * 2.4 + 12 ? nearest : -1;
-    if (docked >= 0) hp = Math.min(stats.maxHp, hp + 9 * dt); // docking repairs
+    if (docked >= 0) {
+      hp = Math.min(stats.maxHp, hp + 9 * dt); // docking repairs
+      if (stats.shieldMax) shield = Math.min(stats.shieldMax, shield + 12 * dt);
+      shieldCharges = stats.shieldChargesMax; // and restocks the capacitors
+    }
     if (docked !== wasDocked) {
       if (wasDocked >= 0) planets[wasDocked].ring.material.opacity = 0.5;
       const dockEl = hud?.els?.dock;
@@ -2354,7 +2765,7 @@ export function mount() {
       }
       const pd = camera.position.distanceTo(p.position);
       const pk = THREE.MathUtils.clamp(pd / 55, 0.7, 3.4);
-      p.userData.label.scale.set(28 * pk, 7 * pk, 1);
+      p.userData.label?.scale.set(28 * pk, 7 * pk, 1);
       if (ship.position.distanceTo(p.position) < 9) {
         startRun(i);
         break;
@@ -2363,8 +2774,10 @@ export function mount() {
   }
 
   /* transit run: flight is scoped to the tunnel path; inputs steer the
-     lateral offset inside the tube */
+     lateral offset inside the tube. The arena phase hands control back to
+     free flight. */
   function updateRun(dt) {
+    if (run.phase === 'arena') return updateArena(dt);
     if (pointerLocked) {
       run.offV.x += mouseDX * 0.045;
       run.offV.y -= mouseDY * 0.045;
@@ -2378,10 +2791,8 @@ export function mount() {
     }
     run.offV.multiplyScalar(Math.exp(-dt * 2.6));
     run.off.addScaledVector(run.offV, dt);
-    /* the boss arena grants extra dodge room */
-    const offMax = run.bossPhase ? 14 : 10;
-    if (run.off.length() > offMax) {
-      run.off.setLength(offMax);
+    if (run.off.length() > 10) {
+      run.off.setLength(10);
       run.offV.multiplyScalar(0.4);
     }
 
@@ -2391,19 +2802,17 @@ export function mount() {
     else fuel = Math.min(100, fuel + stats.fuelRegen * dt);
     run.speed = THREE.MathUtils.lerp(
       run.speed,
-      boosting ? 64 + (stats.vmax - 60) : keys.brake ? 26 : 42,
+      boosting ? run.base + 22 + (stats.vmax - 60) : keys.brake ? 26 : run.base,
       1 - Math.exp(-dt * 1.4),
     );
     audio.thrust(true, boosting);
 
-    if (!run.bossPhase) {
-      run.t = Math.min(1, run.t + (run.speed / run.len) * dt);
-      if (run.t >= 0.96) {
-        run.bossPhase = true;
-        spawnBoss();
-      }
+    run.t = Math.min(1, run.t + (run.speed / run.len) * dt);
+    if (run.t >= 0.97) {
+      enterArena();
+      return;
     }
-    const t = Math.min(run.t, 0.96);
+    const t = run.t;
     const f = frameAt(t);
     const center = run.curve.getPointAt(t, tmpV2);
     ship.position
@@ -2426,9 +2835,29 @@ export function mount() {
       1 - Math.exp(-dt * 4),
     );
 
-    /* obstacles */
+    /* obstacles — drifters re-derive their spot from the curve each frame */
     for (let i = run.rocks.length - 1; i >= 0; i--) {
       const rock = run.rocks[i];
+      const dyn = rock.userData.dyn;
+      if (dyn) {
+        dyn.x += dyn.vx * dt;
+        dyn.y += dyn.vy * dt;
+        const rr = Math.hypot(dyn.x, dyn.y);
+        if (rr > 10.5) {
+          const nx = dyn.x / rr;
+          const ny = dyn.y / rr;
+          const vd = dyn.vx * nx + dyn.vy * ny;
+          if (vd > 0) {
+            dyn.vx -= 2 * vd * nx;
+            dyn.vy -= 2 * vd * ny;
+          }
+        }
+        const fr = frameAt(dyn.t);
+        rock.position
+          .copy(run.curve.getPointAt(dyn.t, tmpV3))
+          .addScaledVector(fr.right, dyn.x)
+          .addScaledVector(fr.up, dyn.y);
+      }
       if (!reduced) {
         rock.rotation.x += dt * 0.4;
         rock.rotation.y += dt * 0.3;
@@ -2441,6 +2870,52 @@ export function mount() {
         run.offV.multiplyScalar(-0.5);
         damageShip(8 + rock.userData.radius * 2, null);
         if (!run.active) return; // died — endRun() already moved us home
+      }
+    }
+
+    /* walls: crossing one means threading its open sector */
+    for (const w of run.walls) {
+      if (run.prevT < w.t && t >= w.t) {
+        const offLen = run.off.length();
+        const ang = Math.atan2(run.off.y, run.off.x);
+        const diff = Math.atan2(Math.sin(ang - w.gapA), Math.cos(ang - w.gapA));
+        const through = offLen >= 2.5 && Math.abs(diff) <= w.gapW;
+        if (through) {
+          addScore(30);
+          audio.pickup();
+        } else {
+          explode(ship.position, '#ff5fd2');
+          run.speed = Math.max(22, run.speed * 0.5);
+          run.offV.multiplyScalar(-0.6);
+          damageShip(14, null);
+          if (!run.active) return;
+        }
+      }
+    }
+    run.prevT = t;
+
+    /* tube sentries: hold station, bob, and open fire as you close in */
+    for (let i = run.adds.length - 1; i >= 0; i--) {
+      const en = run.adds[i];
+      const u = en.userData;
+      u.phase += dt;
+      en.position.copy(u.base);
+      en.position.x += Math.sin(u.phase * 1.3) * 1.6;
+      en.position.y += Math.cos(u.phase * 1.1) * 1.6;
+      en.lookAt(ship.position);
+      en.rotateY(Math.PI); // nose is -z
+      syncHpBar(en);
+      const dist = en.position.distanceTo(ship.position);
+      u.fireCd -= dt;
+      if (u.fireCd <= 0 && t > u.station - 0.18 && t < u.station + 0.05 && dist < 220) {
+        u.fireCd = 1.4 + Math.random() * 0.8;
+        fireEbolt(en.position, ship.position, 0.08);
+        audio.elaser();
+      }
+      if (dist < 3.2) {
+        damageShip(14, en.position);
+        killAdd(en);
+        if (!run.active) return;
       }
     }
 
@@ -2458,27 +2933,114 @@ export function mount() {
       }
     }
 
-    /* the warden: strafes across the tunnel mouth, fires spreads */
-    if (run.boss) {
-      const u = run.boss.userData;
+    /* lock the nearest sentry ahead so missiles have something to chase */
+    let bestD = 200;
+    let bestA = null;
+    for (const en of run.adds) {
+      const d = en.position.distanceTo(ship.position);
+      if (d < bestD) {
+        bestD = d;
+        bestA = en;
+      }
+    }
+    lockTgt = bestA;
+  }
+
+  /* arena: free flight inside the cage; the warden orbits, charges, and
+     calls escorts at half health */
+  function updateArena(dt) {
+    applyFreeFlight(dt);
+
+    /* cage bounds */
+    tmpV2.copy(ship.position).sub(run.arenaC);
+    const cd = tmpV2.length();
+    if (cd > ARENA_R - 10) {
+      tmpV2.normalize();
+      vel.addScaledVector(tmpV2, -dt * 70);
+      if (cd > ARENA_R - 4)
+        ship.position.copy(run.arenaC).addScaledVector(tmpV2, ARENA_R - 4);
+    }
+
+    const boss = run.boss;
+    if (boss) {
+      const u = boss.userData;
       u.phase += dt;
-      const fb = frameAt(0.96);
-      tmpV3
-        .copy(run.curve.getPointAt(0.96, tmpV2))
-        .addScaledVector(fb.tan, 55)
-        .addScaledVector(fb.right, Math.sin(u.phase * 0.9) * 11)
-        .addScaledVector(fb.up, Math.cos(u.phase * 0.7) * 7);
-      run.boss.position.lerp(tmpV3, 1 - Math.exp(-dt * 1.8));
-      run.boss.lookAt(ship.position);
-      run.boss.rotateY(Math.PI); // nose is -z
+      u.modeT -= dt;
+      if (u.modeT <= 0) {
+        u.mode = u.mode === 'orbit' ? 'charge' : 'orbit';
+        u.modeT = u.mode === 'charge' ? 2.2 : Math.max(2.5, 5 - run.level * 0.3);
+        if (u.mode === 'charge') audio.boss();
+      }
+      if (u.mode === 'orbit')
+        tmpV3
+          .set(
+            Math.sin(u.phase * 0.5) * 42,
+            Math.sin(u.phase * 0.83) * 22,
+            Math.cos(u.phase * 0.5) * 42,
+          )
+          .add(run.arenaC);
+      else tmpV3.copy(ship.position);
+      boss.position.lerp(tmpV3, 1 - Math.exp(-dt * (u.mode === 'charge' ? 1.7 : 0.9)));
+      boss.lookAt(ship.position);
+      boss.rotateY(Math.PI); // nose is -z
+      syncHpBar(boss);
       u.fireCd -= dt;
       if (u.fireCd <= 0) {
-        u.fireCd = 1.6;
-        for (let k = 0; k < 3; k++) fireEbolt(run.boss.position, ship.position, 0.14);
+        u.fireCd = Math.max(0.7, 1.5 - run.level * 0.07);
+        const nb = 3 + Math.min(3, run.level);
+        for (let k = 0; k < nb; k++) fireEbolt(boss.position, ship.position, 0.16);
         audio.elaser();
       }
-      lockTgt = run.boss;
-    } else lockTgt = null;
+      if (boss.position.distanceTo(ship.position) < 7) {
+        damageShip(22, boss.position);
+        if (!run.active) return;
+      }
+      if (!u.addsSpawned && u.hp <= u.hpMax * 0.5 && run.level >= 1) {
+        u.addsSpawned = true;
+        const n = 2 + Math.min(2, run.level - 1);
+        for (let k = 0; k < n; k++) {
+          const e = makeEnemyCraft(1);
+          const a = (k / n) * Math.PI * 2;
+          e.position.copy(run.arenaC).add(tmpV3.set(Math.cos(a) * 50, 10, Math.sin(a) * 50));
+          e.userData = { vel: new THREE.Vector3(), hp: 3, hpMax: 3, fireCd: 2 + k, radius: 2.2 };
+          run.group.add(e);
+          run.adds.push(e);
+        }
+        hud?.toast('◬ escorts deployed', 'warn');
+      }
+      /* lock still demands facing — an unconditional boss lock would hand
+         every shot perfect aim assist and melt the fight */
+      tmpV2.copy(boss.position).sub(ship.position).normalize();
+      tmpV3.set(0, 0, -1).applyQuaternion(ship.quaternion);
+      lockTgt = tmpV2.dot(tmpV3) > 0.93 ? boss : null;
+    }
+
+    /* escorts: chase + strafe, same brain as the world interceptors */
+    for (let i = run.adds.length - 1; i >= 0; i--) {
+      const en = run.adds[i];
+      const u = en.userData;
+      const toShip = tmpV3.copy(ship.position).sub(en.position);
+      const dist = toShip.length();
+      toShip.normalize();
+      if (dist > 45) toShip.multiplyScalar(28);
+      else toShip.crossVectors(toShip, UP).multiplyScalar(22);
+      u.vel.lerp(toShip, 1 - Math.exp(-dt * 1.3));
+      en.position.addScaledVector(u.vel, dt);
+      en.lookAt(ship.position);
+      en.rotateY(Math.PI);
+      syncHpBar(en);
+      u.fireCd -= dt;
+      if (u.fireCd <= 0 && dist < 150) {
+        u.fireCd = 1.8 + Math.random();
+        fireEbolt(en.position, ship.position, 0.07);
+        audio.elaser();
+      }
+      if (dist < 3.4) {
+        damageShip(14, en.position);
+        killAdd(en);
+        if (!run.active) return;
+      }
+    }
   }
 
   /* systems that run in both modes: weapons, projectiles, fx, camera, HUD */
@@ -2491,7 +3053,20 @@ export function mount() {
     if (stats.regen) hp = Math.min(stats.maxHp, hp + stats.regen * dt);
     if (stats.shieldMax) {
       shieldHitT += dt;
-      if (shieldHitT > 4) shield = Math.min(stats.shieldMax, shield + stats.shieldRegen * dt);
+      if (shield <= 0 && shieldCharges > 0) {
+        /* a capacitor charge reboots the broken shield to full */
+        shieldRebootT -= dt;
+        if (shieldRebootT <= 0) {
+          shieldCharges--;
+          shield = stats.shieldMax;
+          audio.chime();
+          hud?.toast('⛉ shield rebooted', 'ok');
+          for (const r of ship.userData.shieldRings ?? []) r.material.opacity = 1;
+        }
+      } else if (shieldHitT > 7 && shield < stats.shieldMax / 3) {
+        /* on its own it only trickles back to a third — that's the deal */
+        shield = Math.min(stats.shieldMax / 3, shield + stats.shieldRegen * dt);
+      }
     }
 
     /* invulnerability blink */
@@ -2523,6 +3098,90 @@ export function mount() {
 
     if (keys.fire) fireLasers();
 
+    /* --- ai modules: they run themselves --- */
+    if (stats.hasTurret) {
+      autoT -= dt;
+      if (autoT <= 0) {
+        const tgt = pickAutoTarget();
+        if (tgt) {
+          autoT = stats.turretRate;
+          fireTurret(tgt);
+        } else autoT = 0.35; // nothing in range — rescan soon
+      }
+    }
+    if (stats.hasAutoMissile) {
+      amlT -= dt;
+      if (amlT <= 0) {
+        const tgt = run.active
+          ? (run.boss ?? run.adds[0] ?? null)
+          : nearestEnemy(ship.position);
+        if (tgt && tgt.position.distanceTo(ship.position) < 260) {
+          amlT = stats.autoMissileRate;
+          amlSide = -amlSide;
+          spawnMissile(amlSide * 1.05, tgt);
+          audio.missile();
+        } else amlT = 0.6;
+      }
+    }
+
+    /* burning targets tick damage over time */
+    const tickBurn = (obj, applyDmg) => {
+      const u = obj.userData;
+      if (!u || !(u.burn > 0)) return;
+      u.burn -= dt;
+      u.burnAcc = (u.burnAcc ?? 0) + 2.4 * dt;
+      if (u.burnFx) u.burnFx.material.opacity = 0.55 + Math.sin(time * 18) * 0.3;
+      if (u.burnAcc >= 1) {
+        const d = Math.floor(u.burnAcc);
+        u.burnAcc -= d;
+        popDamage(obj.position, d, '#ff8a4a');
+        applyDmg(d);
+      }
+      if (u.burn <= 0 && u.burnFx) {
+        obj.remove(u.burnFx);
+        u.burnFx.material.dispose();
+        u.burnFx = null;
+      }
+    };
+    if (run.active) {
+      if (run.boss) tickBurn(run.boss, (d) => hurtBoss(d, null));
+      for (let i = run.adds.length - 1; i >= 0; i--) {
+        const e = run.adds[i];
+        tickBurn(e, (d) => {
+          e.userData.hp -= d;
+          if (e.userData.hp <= 0) killAdd(e);
+        });
+      }
+      for (let i = run.rocks.length - 1; i >= 0; i--) {
+        const r = run.rocks[i];
+        tickBurn(r, (d) => {
+          r.userData.hp -= d;
+          if (r.userData.hp <= 0) {
+            explode(r.position, AMBER);
+            audio.boom(false);
+            run.group?.remove(r);
+            run.rocks.splice(i, 1);
+            addScore(10);
+          }
+        });
+      }
+    } else {
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        tickBurn(e, (d) => {
+          e.userData.hp -= d;
+          if (e.userData.hp <= 0) killEnemy(e);
+        });
+      }
+      for (let i = asteroids.length - 1; i >= 0; i--) {
+        const r = asteroids[i];
+        tickBurn(r, (d) => {
+          r.userData.hp -= d;
+          if (r.userData.hp <= 0) killAsteroid(r);
+        });
+      }
+    }
+
     /* player bolts — per-weapon damage, swept collision, both modes */
     for (const b of bolts) {
       if (b.life <= 0) continue;
@@ -2542,13 +3201,15 @@ export function mount() {
         continue;
       }
       let consumed = false;
+      const dmg = b.dmg ?? stats.boltDmg;
       const rocks = run.active ? run.rocks : asteroids;
       for (let ai = rocks.length - 1; ai >= 0; ai--) {
         const rock = rocks[ai];
         if (sweepHit(segA, b.dir, step, rock.position, rock.userData.radius + 0.9)) {
           consumed = true;
-          rock.userData.hp -= stats.boltDmg;
-          popDamage(b.pos, stats.boltDmg);
+          rock.userData.hp -= dmg;
+          popDamage(b.pos, dmg);
+          if (b.ignite) igniteTarget(rock);
           if (rock.userData.hp <= 0) {
             if (run.active) {
               explode(rock.position, AMBER);
@@ -2561,24 +3222,37 @@ export function mount() {
           break;
         }
       }
-      if (!consumed) {
-        if (run.active) {
-          if (run.boss && sweepHit(segA, b.dir, step, run.boss.position, 5.4)) {
-            consumed = true;
-            popDamage(b.pos, stats.boltDmg);
-            hurtBoss(stats.boltDmg, b.pos);
-          }
+      if (!consumed && run.active) {
+        if (run.boss && sweepHit(segA, b.dir, step, run.boss.position, 5.4)) {
+          consumed = true;
+          popDamage(b.pos, dmg);
+          if (b.ignite) igniteTarget(run.boss);
+          hurtBoss(dmg, b.pos);
         } else {
-          for (let ei = enemies.length - 1; ei >= 0; ei--) {
-            const en = enemies[ei];
+          for (let ei = run.adds.length - 1; ei >= 0; ei--) {
+            const en = run.adds[ei];
             if (sweepHit(segA, b.dir, step, en.position, 2.8)) {
               consumed = true;
-              en.userData.hp -= stats.boltDmg;
-              popDamage(b.pos, stats.boltDmg);
-              if (en.userData.hp <= 0) killEnemy(en);
+              en.userData.hp -= dmg;
+              popDamage(b.pos, dmg);
+              if (b.ignite) igniteTarget(en);
+              if (en.userData.hp <= 0) killAdd(en);
               else explode(b.pos, '#ff5fd2');
               break;
             }
+          }
+        }
+      } else if (!consumed) {
+        for (let ei = enemies.length - 1; ei >= 0; ei--) {
+          const en = enemies[ei];
+          if (sweepHit(segA, b.dir, step, en.position, 2.8)) {
+            consumed = true;
+            en.userData.hp -= dmg;
+            popDamage(b.pos, dmg);
+            if (b.ignite) igniteTarget(en);
+            if (en.userData.hp <= 0) killEnemy(en);
+            else explode(b.pos, '#ff5fd2');
+            break;
           }
         }
       }
@@ -2614,6 +3288,18 @@ export function mount() {
             b.line.visible = false;
             popDamage(b.pos, 5, '#6ad8ff');
             hurtBoss(5, b.pos);
+          } else {
+            for (let ei = run.adds.length - 1; ei >= 0; ei--) {
+              const en = run.adds[ei];
+              if (sweepHit(segA, b.dir, step, en.position, 2.8)) {
+                b.life = 0;
+                b.line.visible = false;
+                popDamage(b.pos, 5, '#6ad8ff');
+                en.userData.hp -= 5;
+                if (en.userData.hp <= 0) killAdd(en);
+                break;
+              }
+            }
           }
         } else {
           for (let ei = enemies.length - 1; ei >= 0; ei--) {
@@ -2636,7 +3322,7 @@ export function mount() {
         b.reflected = true;
         b.life = 2.2;
         b.line.material.color.set(CYAN);
-        const tgt = run.active ? run.boss : nearestEnemy(b.pos);
+        const tgt = run.active ? (run.boss ?? run.adds[0] ?? null) : nearestEnemy(b.pos);
         if (tgt) b.dir.copy(tgt.position).sub(b.pos).normalize();
         else b.dir.negate();
         addScore(15);
@@ -2708,6 +3394,17 @@ export function mount() {
             popDamage(m.position, stats.missileDmg, '#ffc46a');
             hurtBoss(stats.missileDmg, m.position);
             dead = true;
+          } else {
+            for (let ei = run.adds.length - 1; ei >= 0; ei--) {
+              const en = run.adds[ei];
+              if (sweepHit(segA, segB, mStep, en.position, 3)) {
+                en.userData.hp -= stats.missileDmg;
+                popDamage(m.position, stats.missileDmg, '#ffc46a');
+                if (en.userData.hp <= 0) killAdd(en);
+                dead = true;
+                break;
+              }
+            }
           }
         } else {
           for (let ei = enemies.length - 1; ei >= 0; ei--) {
@@ -2779,13 +3476,25 @@ export function mount() {
       els.hp.style.width = `${(hp / stats.maxHp) * 100}%`;
       els.hp.classList.toggle('low', hp / stats.maxHp < 0.3);
       els.shieldRow.hidden = !stats.shieldMax;
-      if (stats.shieldMax) els.shield.style.width = `${(shield / stats.shieldMax) * 100}%`;
+      if (stats.shieldMax) {
+        els.shield.style.width = `${(shield / stats.shieldMax) * 100}%`;
+        if (els.charges)
+          els.charges.textContent = stats.shieldChargesMax ? '⬢'.repeat(shieldCharges) : '';
+      }
       els.boost.style.width = `${fuel}%`;
       els.stats.textContent = run.active
-        ? `v ${Math.round(run.speed)} · score ${score} · ⌬ ${
-            run.bossPhase ? 'WARDEN' : `${Math.round(run.t * 100)}%`
-          }`
+        ? run.phase === 'arena'
+          ? `WARDEN ${Math.max(0, Math.ceil(run.boss?.userData.hp ?? 0))} · L${run.level + 1} ${run.kind} · score ${score}`
+          : `v ${Math.round(run.speed)} · ⌬ ${Math.round(run.t * 100)}% · L${run.level + 1} ${run.kind} · score ${score}`
         : `v ${Math.round(vel.length())} · ◆ ${scrap} · ⬡ ${cores} · score ${score}`;
+      /* boss bar: front and center while the warden lives */
+      const bossOn = run.active && !!run.boss;
+      els.boss.hidden = !bossOn;
+      if (bossOn) {
+        const bu = run.boss.userData;
+        els.bossName.textContent = `⌬ THE WARDEN · L${run.level + 1}`;
+        els.bossFill.style.width = `${Math.max(0, (bu.hp / bu.hpMax) * 100)}%`;
+      }
       els.top.textContent = `system xandreed · ${posts.length} planets · best ${best}`;
       if (lockTgt) {
         els.lock.textContent = `◈ lock ${Math.round(lockTgt.position.distanceTo(ship.position))}m`;

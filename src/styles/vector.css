@@ -312,15 +312,54 @@
   color: oklch(71% 0.09 155);
 }
 
-/* toasts */
+/* boss bar: front and center while a warden lives */
+.vector-hud .vh-boss[hidden] {
+  display: none;
+}
+
+.vector-hud .vh-boss {
+  position: absolute;
+  top: 4.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(430px, 64vw);
+  display: grid;
+  gap: 0.28rem;
+  justify-items: center;
+}
+
+.vh-boss span {
+  font-family: 'VT323', monospace;
+  font-size: 1.2rem;
+  letter-spacing: 0.12em;
+  color: oklch(72% 0.24 340);
+  text-shadow: 0 0 14px oklch(72% 0.24 340 / 0.6);
+}
+
+.vh-boss > div {
+  width: 100%;
+  height: 11px;
+  background: oklch(10% 0.02 340 / 0.85);
+  border: 1px solid oklch(72% 0.24 340 / 0.55);
+}
+
+.vh-boss i {
+  display: block;
+  height: 100%;
+  background: oklch(72% 0.24 340);
+  box-shadow: 0 0 12px oklch(72% 0.24 340 / 0.7);
+  transition: width 0.18s ease-out;
+}
+
+/* toasts: right edge — the center of the screen belongs to flying */
 .vector-hud .vh-toasts {
   position: absolute;
   top: 8.6rem;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 1rem;
   display: grid;
   gap: 0.3rem;
-  justify-items: center;
+  justify-items: end;
+  text-align: right;
 }
 
 .vh-toast {
@@ -359,8 +398,16 @@
 @keyframes vh-toast-in {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateX(8px);
   }
+}
+
+/* shield reboot charges: one ⬢ per stored capacitor */
+.vh-bar-row em {
+  font-style: normal;
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  color: oklch(80% 0.16 230);
 }
 
 /* take-the-stick overlay */
@@ -576,7 +623,6 @@
 }
 
 .vh-tree-head button {
-  margin-left: auto;
   font-family: 'VT323', monospace;
   font-size: 1rem;
   padding: 0.25rem 0.6rem;
@@ -584,6 +630,16 @@
   background: transparent;
   border: 1px solid oklch(87% 0.21 155 / 0.35);
   cursor: pointer;
+}
+
+/* only the first head button rides the flex gap to the right edge */
+.vh-tree-head button:first-of-type {
+  margin-left: auto;
+}
+
+.vh-tree-head [data-vh-tree-reset] {
+  color: oklch(82% 0.13 75);
+  border-color: oklch(82% 0.13 75 / 0.4);
 }
 
 .vh-tree-grid {

@@ -82,12 +82,15 @@ them oldest → newest.
 - **Fight** — asteroids drop scrap and score, interceptors start hunting as
   your score climbs, docking at a planet repairs. Best score sticks.
 - **Progress** — reading an article banks a ⬡ core for the ability tree (`T`):
-  guns / drive / hull branches where every node is a visible ship component or
-  a stat — twin cannons, missile pods, lance coils, afterburner, swept wings,
-  reflex gyros, a regenerating deflector shield, gilded hull, nanoreactor.
-- **Transit runs** — portal rings at the system edge open seeded tunnels:
-  dodge obstacles, thread boost gates, and bring down the warden at the far
-  end.
+  offence / defense / ai branches, resettable for a full refund. Offence builds
+  the manual guns; defense runs from a depleting shield with reboot charges to
+  the afterburner; the ai branch installs autonomous modules — a sentry turret,
+  plasma-burn rounds, a missile autoloader — and support nodes that overclock
+  them. Every hit shows its number; every enemy carries its health bar.
+- **Transit runs** — portal rings at the system edge open infinite procedural
+  tunnels: four challenge kinds (gauntlet, slalom, hunt, surge) that scale with
+  a persistent run level, ending in a free-flight arena against the warden —
+  boss bar, escort waves and all. Win and every portal levels up.
 - **Sound** — every effect synthesized in WebAudio, zero assets. `M` mutes.
 
 Ship state and score survive article round-trips. The world reads the post
