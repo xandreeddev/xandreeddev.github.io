@@ -51,9 +51,11 @@ interface Props {
   description: string;
   ogImage?: string;
   ogType?: 'website' | 'article';
+  /** Unlisted pages (draft previews): kept out of search engines. */
+  noindex?: boolean;
 }
 
-const { title, description, ogImage = '/og-default.png', ogType = 'website' } = Astro.props;
+const { title, description, ogImage = '/og-default.png', ogType = 'website', noindex = false } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const ogImageUrl = new URL(ogImage, Astro.site);
 const path = Astro.url.pathname;
@@ -89,6 +91,7 @@ const STYLES = [
       })();
     </script>
     <title>{title}</title>
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
     <meta name="description" content={description} />
     <meta name="author" content="Xand Reed" />
     <link rel="canonical" href={canonical} />

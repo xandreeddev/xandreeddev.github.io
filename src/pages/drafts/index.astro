@@ -1,0 +1,20 @@
+---
+import Base from '../../layouts/Base.astro';
+import PostRow from '../../components/PostRow.astro';
+import { getDrafts } from '../../utils/posts';
+
+// Unlisted draft previews: reachable by URL, never linked, never indexed.
+const drafts = await getDrafts();
+---
+
+<Base title="drafts — xandreed" description="Unpublished drafts, for review only." noindex>
+  <div class="container">
+    <section class="post-list" aria-label="Drafts">
+      <p class="meta" style="margin: 2.2rem 0 1.4rem; color: var(--text-3);">
+        {drafts.length} unpublished {drafts.length === 1 ? 'draft' : 'drafts'} — review copies, not
+        final, not announced.
+      </p>
+      {drafts.map((post) => <PostRow post={post} base="/drafts" />)}
+    </section>
+  </div>
+</Base>

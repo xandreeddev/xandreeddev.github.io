@@ -8,6 +8,12 @@ export async function getPosts(): Promise<Post[]> {
   return posts.sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
 }
 
+/** Draft posts only — served unlisted + noindexed under /drafts in prod. */
+export async function getDrafts(): Promise<Post[]> {
+  const posts = await getCollection('posts', (post) => post.data.draft);
+  return posts.sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+}
+
 export const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
 
 export function readingTime(body: string): number {

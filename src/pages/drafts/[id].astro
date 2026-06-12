@@ -1,0 +1,73 @@
+---
+import { render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import Toc from '../../components/Toc.astro';
+import { getDrafts, isoDate, readingTime, type Post } from '../../utils/posts';
+
+// Unlisted draft previews. Tags render as plain text (a draft's tag page may
+// not exist in prod), and prev/next stays within /drafts.
+export async function getStaticPaths() {
+  const drafts = await getDrafts();
+  return drafts.map((post, i) => ({
+    params: { id: post.id },
+    props: { post, newer: drafts[i - 1] ?? null, older: drafts[i + 1] ?? null },
+  }));
+}
+
+interface Props {
+  post: Post;
+  newer: Post | null;
+  older: Post | null;
+}
+
+const { post, newer, older } = Astro.props;
+const { Content, headings } = await render(post);
+const minutes = readingTime(post.body ?? '');
+---
+
+<Base title={`${post.data.title} — xandreed`} description={post.data.description} ogType="article" noindex>
+  <div class="container">
+    <article class="post-wrap">
+      <header class="post-header">
+        <p class="meta">
+          <time datetime={post.data.pubDate.toISOString()}>{isoDate(post.data.pubDate)}</time>
+          <span class="sep" aria-hidden="true">·</span>
+          <span>{minutes} min read</span>
+          {post.data.tags.length > 0 && <span class="sep" aria-hidden="true">·</span>}
+          {post.data.tags.map((tag) => <span class="tag">{tag}</span>)}
+          <span class="draft-badge">draft</span>
+        </p>
+        <h1>{post.data.title}</h1>
+        <p class="lede">{post.data.description}</p>
+      </header>
+      <Toc headings={headings} />
+      <div class="prose">
+        <Content />
+      </div>
+      <footer class="post-footer">
+        <nav class="post-nav" aria-label="Adjacent drafts">
+          <span>
+            {
+              older && (
+                <a href={`/drafts/${older.id}/`}>
+                  <span class="dir">← older draft</span>
+                  <span class="t">{older.data.title}</span>
+                </a>
+              )
+            }
+          </span>
+          <span class="next">
+            {
+              newer && (
+                <a href={`/drafts/${newer.id}/`}>
+                  <span class="dir">newer draft →</span>
+                  <span class="t">{newer.data.title}</span>
+                </a>
+              )
+            }
+          </span>
+        </nav>
+      </footer>
+    </article>
+  </div>
+</Base>

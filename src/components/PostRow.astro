@@ -3,12 +3,14 @@ import { isoDate, type Post } from '../utils/posts';
 
 interface Props {
   post: Post;
+  /** Link prefix — the drafts index points rows at /drafts instead. */
+  base?: string;
 }
 
-const { post } = Astro.props;
+const { post, base = '/posts' } = Astro.props;
 ---
 
-<a class="post-row" href={`/posts/${post.id}/`}>
+<a class="post-row" href={`${base}/${post.id}/`}>
   <time datetime={post.data.pubDate.toISOString()}>{isoDate(post.data.pubDate)}</time>
   <span>
     <span class="title">

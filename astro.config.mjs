@@ -20,7 +20,8 @@ const transformerCodeTitle = {
 
 export default defineConfig({
   site: 'https://xandreed.dev',
-  integrations: [sitemap()],
+  // /drafts is unlisted: never in the sitemap (pages also carry noindex)
+  integrations: [sitemap({ filter: (page) => !page.includes('/drafts/') })],
   markdown: {
     rehypePlugins: [
       rehypeHeadingIds,
