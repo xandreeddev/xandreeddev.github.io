@@ -3,6 +3,9 @@ title: 'Where exceptions are allowed to exist'
 description: 'Failures are values everywhere inside; exceptions survive only at the adapter boundary, under Effect.try. An audit of my own codebase, with the diffs.'
 pubDate: 2026-06-04
 tags: [effect, typescript]
+series:
+  name: 'Effect in practice'
+  order: 1
 draft: false
 ---
 

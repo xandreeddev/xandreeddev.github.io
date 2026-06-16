@@ -3,6 +3,9 @@ title: 'The model will find the fourth shape: property-based testing with fast-c
 description: 'Property-based testing for mapping code: fast-check via Effect, with generators derived from your schemas.'
 pubDate: 2026-06-14
 tags: [effect, typescript, agents]
+series:
+  name: 'Effect in practice'
+  order: 3
 draft: false
 ---
 

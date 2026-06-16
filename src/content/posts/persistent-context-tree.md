@@ -3,6 +3,9 @@ title: 'Sub-agent transcripts are capital, not exhaust'
 description: "Most frameworks throw away a sub-agent's context. Keep every one as a node in a persistent, resumable tree instead."
 pubDate: 2026-06-11
 tags: [agents, ai, effect]
+series:
+  name: 'How an agent remembers'
+  order: 3
 ---
 
 Every agent framework has sub-agents now, and nearly all of them borrowed the same mental model from operating systems: a sub-agent is a subprocess. Spawn it, hand it a task, collect its stdout, forget it ever existed.

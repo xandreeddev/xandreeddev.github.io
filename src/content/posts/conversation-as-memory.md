@@ -3,6 +3,9 @@ title: 'The transcript is the memory'
 description: 'A model call is stateless, so the conversation transcript is the agent''s entire memory. Keep the whole history as an append-only log — and that one invariant is what makes caching, compression, and resume all work.'
 pubDate: 2026-06-18
 tags: [agents, ai, effect]
+series:
+  name: 'How an agent remembers'
+  order: 1
 draft: true
 ---
 

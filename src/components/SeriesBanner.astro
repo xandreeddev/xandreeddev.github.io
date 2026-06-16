@@ -1,0 +1,26 @@
+---
+import type { SeriesPart } from '../utils/posts';
+
+interface Props {
+  name: string;
+  parts: SeriesPart[];
+}
+
+const { name, parts } = Astro.props;
+const rank = parts.findIndex((p) => p.current) + 1;
+---
+
+{
+  parts.length >= 2 && (
+    <aside class="series-banner" aria-label={`Series: ${name}`}>
+      <p class="series-eyebrow">{name} · Part {rank} of {parts.length}</p>
+      <ol class="series-list">
+        {parts.map((p) => (
+          <li class:list={['series-item', { current: p.current }]}>
+            {p.current ? <span>{p.title}</span> : <a href={p.href}>{p.title}</a>}
+          </li>
+        ))}
+      </ol>
+    </aside>
+  )
+}

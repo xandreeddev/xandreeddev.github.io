@@ -627,6 +627,64 @@ main {
   color: var(--accent);
 }
 
+/* series banner */
+
+.series-banner {
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  padding: 0.7rem 1rem 0.85rem;
+  margin-bottom: 2rem;
+}
+
+.series-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 0.5rem;
+}
+
+.series-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: series;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.series-list .series-item {
+  counter-increment: series;
+  font-size: var(--step--1);
+  line-height: 1.4;
+}
+
+.series-list .series-item::before {
+  content: counter(series) '. ';
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.series-list a {
+  text-decoration: none;
+  color: var(--text-2);
+}
+
+.series-list a:hover {
+  color: var(--accent);
+}
+
+.series-list .current > span {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.series-list .current::before {
+  color: var(--accent);
+}
+
 /* post footer */
 
 .post-footer {

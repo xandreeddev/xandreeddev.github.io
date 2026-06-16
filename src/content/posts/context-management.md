@@ -3,6 +3,9 @@ title: 'The context window is a resource you engineer, not a buffer you fill'
 description: 'What lives in an agent context window, and the lifecycle — admit, clip, fold, curate — that keeps it working.'
 pubDate: 2026-06-29
 tags: [agents, ai, effect]
+series:
+  name: 'How an agent remembers'
+  order: 2
 draft: true
 ---
 

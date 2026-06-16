@@ -3,6 +3,9 @@ title: 'Effect, in full: services, layers, errors, and the concurrency toolkit'
 description: 'What Effect.ts actually buys you — dependencies, failures, and concurrency as ordinary values. A long tour of the semantics, every claim backed by real code.'
 pubDate: 2026-05-31
 tags: [effect, typescript]
+series:
+  name: 'Effect, from zero'
+  order: 2
 ---
 
 Effect has a marketing problem: it gets introduced as functional programming, so people file it next to monad tutorials and move on. That's a shame, because the library is a concrete answer to the three things that actually hurt in long-running TypeScript programs — **dependencies**, **failures**, and **concurrency** — and the whole answer fits in one type:

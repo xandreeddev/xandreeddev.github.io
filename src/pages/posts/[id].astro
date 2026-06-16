@@ -2,23 +2,43 @@
 import { render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import Toc from '../../components/Toc.astro';
-import { getPosts, isoDate, readingTime, type Post } from '../../utils/posts';
+import SeriesBanner from '../../components/SeriesBanner.astro';
+import { getPosts, isoDate, readingTime, seriesPosts, type Post, type SeriesPart } from '../../utils/posts';
 
 export async function getStaticPaths() {
   const posts = await getPosts();
-  return posts.map((post, i) => ({
-    params: { id: post.id },
-    props: { post, newer: posts[i - 1] ?? null, older: posts[i + 1] ?? null },
-  }));
+  return posts.map((post, i) => {
+    const series = post.data.series;
+    const seriesParts: SeriesPart[] = series
+      ? seriesPosts(posts, series.name).map((p) => ({
+          id: p.id,
+          title: p.data.title,
+          href: `/posts/${p.id}/`,
+          current: p.id === post.id,
+        }))
+      : [];
+    return {
+      params: { id: post.id },
+      props: {
+        post,
+        newer: posts[i - 1] ?? null,
+        older: posts[i + 1] ?? null,
+        seriesName: series?.name ?? null,
+        seriesParts,
+      },
+    };
+  });
 }
 
 interface Props {
   post: Post;
   newer: Post | null;
   older: Post | null;
+  seriesName: string | null;
+  seriesParts: SeriesPart[];
 }
 
-const { post, newer, older } = Astro.props;
+const { post, newer, older, seriesName, seriesParts } = Astro.props;
 const { Content, headings } = await render(post);
 const minutes = readingTime(post.body ?? '');
 ---
@@ -38,6 +58,7 @@ const minutes = readingTime(post.body ?? '');
         <h1>{post.data.title}</h1>
         <p class="lede">{post.data.description}</p>
       </header>
+      {seriesName && <SeriesBanner name={seriesName} parts={seriesParts} />}
       <Toc headings={headings} />
       <div class="prose">
         <Content />

@@ -3,6 +3,9 @@ title: 'Make the compiler tell your ids apart: a guide to branded types'
 description: 'To the type checker, every id and path in your domain is the same primitive — and that is a bug it should have caught. Branded types in Effect give them distinct identities that erase on encode: no migration, just compile errors at the call sites that were always wrong.'
 pubDate: 2026-06-12
 tags: [effect, typescript]
+series:
+  name: 'Effect in practice'
+  order: 2
 draft: false
 ---
 

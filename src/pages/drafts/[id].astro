@@ -2,25 +2,48 @@
 import { render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import Toc from '../../components/Toc.astro';
-import { getDrafts, isoDate, readingTime, type Post } from '../../utils/posts';
+import SeriesBanner from '../../components/SeriesBanner.astro';
+import { getDrafts, getAllPosts, isoDate, readingTime, seriesPosts, type Post, type SeriesPart } from '../../utils/posts';
 
 // Unlisted draft previews. Tags render as plain text (a draft's tag page may
-// not exist in prod), and prev/next stays within /drafts.
+// not exist in prod), and prev/next stays within /drafts. Series banners show
+// the FULL planned arc (live + draft) so the reading order can be previewed
+// end to end — shipped parts link to /posts, still-draft parts to /drafts.
 export async function getStaticPaths() {
   const drafts = await getDrafts();
-  return drafts.map((post, i) => ({
-    params: { id: post.id },
-    props: { post, newer: drafts[i - 1] ?? null, older: drafts[i + 1] ?? null },
-  }));
+  const all = await getAllPosts();
+  return drafts.map((post, i) => {
+    const series = post.data.series;
+    const seriesParts: SeriesPart[] = series
+      ? seriesPosts(all, series.name).map((p) => ({
+          id: p.id,
+          title: p.data.title,
+          href: p.data.draft ? `/drafts/${p.id}/` : `/posts/${p.id}/`,
+          current: p.id === post.id,
+        }))
+      : [];
+    return {
+      params: { id: post.id },
+      props: {
+        post,
+        newer: drafts[i - 1] ?? null,
+        older: drafts[i + 1] ?? null,
+        seriesName: series?.name ?? null,
+        seriesParts,
+      },
+    };
+  });
 }
 
 interface Props {
   post: Post;
   newer: Post | null;
   older: Post | null;
+  seriesName: string | null;
+  seriesParts: SeriesPart[];
 }
 
-const { post, newer, older } = Astro.props;
+const { post, newer, older, seriesName, seriesParts } = Astro.props;
 const { Content, headings } = await render(post);
 const minutes = readingTime(post.body ?? '');
 ---
@@ -40,6 +63,7 @@ const minutes = readingTime(post.body ?? '');
         <h1>{post.data.title}</h1>
         <p class="lede">{post.data.description}</p>
       </header>
+      {seriesName && <SeriesBanner name={seriesName} parts={seriesParts} />}
       <Toc headings={headings} />
       <div class="prose">
         <Content />
