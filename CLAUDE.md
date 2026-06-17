@@ -22,7 +22,7 @@ in dev. When touching the vector world or touch controls, test with real pointer
 
 | Path | Role |
 | --- | --- |
-| `src/layouts/Base.astro` | Head/SEO, font imports per style, FOUC-guard inline script, header + style switcher, copy-button injector, lazy world bootstrap |
+| `src/layouts/Base.astro` | Head/SEO, font imports per style, FOUC-guard inline script, prod-only GoatCounter analytics snippet, header + style switcher, copy-button injector, lazy world bootstrap |
 | `src/pages/index.astro` | Homepage — intro + posts grouped by UTC year |
 | `src/pages/posts/[id].astro` | Post page — TOC, reading time, tags, draft badge, older/newer nav, series banner |
 | `src/pages/tags/[tag].astro` | Tag listings (tags derived from non-draft posts in prod) |
