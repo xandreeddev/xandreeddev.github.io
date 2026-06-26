@@ -32,7 +32,7 @@ That guard isn't laziness; it's a default that quietly assumes every user is a d
 
 So [efferent](https://github.com/xandreeddev/efferent)'s storage policy starts with a parser whose *default branch* is the product decision. One value — the `EFFERENT_DB_URL` environment variable — selects the backend, and the absence of that value is not an error:
 
-```ts title="packages/adapters/src/database/migrator.ts"
+```ts title="packages/sdk-adapters/src/database/migrator.ts"
 const defaultSqlitePath = () => join(homedir(), '.efferent', 'efferent.db')
 
 type DbTarget =
@@ -53,7 +53,7 @@ Unset means SQLite at `~/.efferent/efferent.db`. A `postgres://` URL means Postg
 
 The other half of zero-config is that *first contact creates everything*. The layer that builds the SQLite stack makes the directory before it opens the file, and runs migrations before anything queries:
 
-```ts title="packages/adapters/src/database/migrator.ts"
+```ts title="packages/sdk-adapters/src/database/migrator.ts"
 /** SQLite client + migrator at `filename` (creating its parent dir). */
 const sqliteDatabaseLive = (filename: string) =>
   Layer.unwrapEffect(
@@ -74,7 +74,7 @@ Trace the first run end to end: no env var → `parseDbTarget` says SQLite at th
 
 Briefly — because the semantics of what's *in* these tables are posts of their own — here is what that file contains. Conversations and their messages, plus **checkpoints**: fold points that let a long session collapse everything before a summary. And the **context tree**: one node per sub-agent spawn, with its own message log. The whole schema is readable in one screen:
 
-```ts title="packages/adapters/src/database/migrations-sqlite/0001_init.ts"
+```ts title="packages/sdk-adapters/src/database/migrations-sqlite/0001_init.ts"
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient // [!code highlight]
   yield* sql`
@@ -120,7 +120,7 @@ And it would break [efferent](https://github.com/xandreeddev/efferent) the momen
 
 The fix is to stop treating migrations as files the program *finds* and start treating them as data the program *contains*:
 
-```ts title="packages/adapters/src/database/migrator.ts"
+```ts title="packages/sdk-adapters/src/database/migrator.ts"
 import sqlite0001 from './migrations-sqlite/0001_init.js'
 import sqlite0002 from './migrations-sqlite/0002_context_tree.js'
 // … 0003–0006
@@ -157,7 +157,7 @@ This compiles, and it's a bug. Layers are memoized *by reference* — Effect bui
 
 So the composition root provides both stores over a *single* database stack, and the layer that does it is where the product decision from section one becomes code:
 
-```ts title="packages/adapters/src/database/migrator.ts"
+```ts title="packages/sdk-adapters/src/database/migrator.ts"
 export const StoresLive = Layer.unwrapEffect(
   Effect.gen(function* () {
     const url = yield* Config.option(Config.string('EFFERENT_DB_URL'))
@@ -185,7 +185,7 @@ Why ship Postgres support at all, if SQLite is the right answer for a single-use
 
 You already saw the env-var route: set `EFFERENT_DB_URL=postgres://…` and `StoresLive` builds the Postgres branch. For people who'd rather not manage env vars, the TUI has a `:db` command that persists the choice to config:
 
-```ts title="packages/cli/src/tui-solid/actions/settings.ts"
+```ts title="packages/code/src/cli/actions/settings.ts"
 /** `:db` — show the active store, or write a new `dbUrl` to project/global config. */
 export const applyDb = (store: TuiStore, cwd: string, tokens: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -215,7 +215,7 @@ Here's the part that makes the hatch trustworthy rather than aspirational: **the
 
 What it costs is SQL portability, and the bill is real. There is no single migration history — there are two dialect-specific ones (ten Postgres migrations, six SQLite), because the engines genuinely differ: `uuid` becomes `TEXT`, `jsonb` becomes a JSON string in `TEXT`, `bigint` becomes `INTEGER`. The stores mirror each other but not literally — the Postgres queries carry `::uuid` and `::jsonb` casts, and the "first user message" preview is `content->>'content'` on Postgres versus `json_extract(content, '$.content')` on SQLite. Even *reading* differs: Postgres hands `jsonb` back as a parsed object, SQLite hands back a string, and one shared codec is the only place that knows:
 
-```ts title="packages/adapters/src/database/messageCodec.ts"
+```ts title="packages/sdk-adapters/src/database/messageCodec.ts"
 // Total: an unparseable string comes back as-is and fails the downstream
 // message schema as the store's tagged error — nothing throws.
 const JsonValue = Schema.parseJson(Schema.Unknown)

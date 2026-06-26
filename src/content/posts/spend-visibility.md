@@ -35,7 +35,7 @@ res.usage  // { inputTokens: 18432, outputTokens: 211, cachedInputTokens: 15890 
 
 The actual work is uglier than "read the field", because providers don't agree on what the fields *mean*. Some put usage on the response object; some streaming adapters emit it in a trailing `finish` part — sometimes two of them, only one carrying data. Google reports under `usageMetadata` with its own key names. And Anthropic has a semantic difference that will silently wreck your accounting: its `input_tokens` *excludes* cache reads and cache writes, while Gemini and OpenAI *include* cached tokens in their prompt counts. [efferent](https://github.com/xandreeddev/efferent) quarantines all of this in one normalizer:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 /** Token usage from a response's `usage` + the stream's finish-part metadata. */
 export const extractUsage = (usage: unknown, content: ReadonlyArray<unknown>): TokenUsage => {
   const u = (usage ?? {}) as ProviderUsage
@@ -63,7 +63,7 @@ Just as important as *how* is *where*: once, at the single point where responses
 
 Now the design decision I'd defend hardest: the usage doesn't go to a stats table, a metrics service, or an in-memory counter. It goes **onto the assistant message itself** — embedded in the message's provider-metadata blob, under the agent's own key, and persisted to the conversation store with everything else:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 const EFFERENT_USAGE_KEY = 'efferent'
 
 /** Embed the API-reported turn usage into the turn's assistant message, so it
@@ -78,7 +78,7 @@ export const attachUsageToAssistant = (messages: Array<AgentMessage>, usage: Tok
 
 And the call site in the loop, right where the turn's messages are appended:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const tail = responseToAgentMessages(content)   // assistant + tool messages
 const usage = extractUsage(res.usage, content)
 attachUsageToAssistant(tail, usage)             // the receipt rides with the turn // [!code highlight]
@@ -89,7 +89,7 @@ Why this and not a proper ledger table? Because a conversation store is already 
 
 The payoff arrives the moment you close the terminal. Resume a session tomorrow and a stats-table design starts blind — or worse, starts at zero, cheerfully claiming your 200-message history costs nothing to continue. [efferent](https://github.com/xandreeddev/efferent) instead replays the receipts:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 /** Scan a persisted conversation for embedded turn usage. */
 export const recoverConversationStats = (messages: ReadonlyArray<AgentMessage>) => {
   let cumulativeOutput = 0, cumulativeTotal = 0, turns = 0
@@ -111,7 +111,7 @@ One pass over history and the meter is exactly where it was: the last turn's inp
 
 And when there's nothing to replay — histories recorded before usage annotation existed — the honest move is an estimate that *admits* it's one:
 
-```ts title="packages/cli/src/tui-solid/actions/session.ts"
+```ts title="packages/code/src/cli/actions/session.ts"
 // History without persisted usage: a 0/1M gauge would claim a resumed
 // session costs nothing on its next turn. Estimate at ~4 chars/token and
 // mark it — the gauge shows `~` until the first real provider count.
@@ -125,16 +125,16 @@ The `~` prefix renders in the UI until the next provider reply replaces the gues
 
 ## Attribute by role: helper calls are real spend
 
-Modern agents don't run one model; they run a *cast*. In [efferent](https://github.com/xandreeddev/efferent), all agentic work runs on **main**, latency-sensitive helper calls run on **fast**, and background utility work runs on **cheap** — which concrete model fills each role is runtime selection and a post of its own. This post owns the other half of that design: their accounting. Because the moment a feature can quietly call a model, you have spend with no user action attached, and the lazy path — letting it hide inside the feature that made it — is how an agent's bill stops being explainable.
+Modern agents don't run one model; they run a *cast*. In [efferent](https://github.com/xandreeddev/efferent), agentic work runs on **general** — with a dedicated **code** tier for sub-agents that write code — and every helper call, latency-sensitive or background, runs on **fast** — which concrete model fills each role is runtime selection and a post of its own. This post owns the other half of that design: their accounting. Because the moment a feature can quietly call a model, you have spend with no user action attached, and the lazy path — letting it hide inside the feature that made it — is how an agent's bill stops being explainable.
 
 The ledger is almost embarrassingly small. That's the point — attribution is a data shape, not a subsystem:
 
-```ts title="packages/cli/src/tui-solid/presentation/sidePane.ts"
+```ts title="packages/code/src/cli/presentation/sidePane.ts"
 /** Billed tokens (input + output) accumulated per model role this session. */
 export interface RoleSpend {
-  readonly main: number   // all agentic work — the root loop AND sub-agents
-  readonly fast: number   // latency-sensitive helpers: digests, approval judgments
-  readonly cheap: number  // background utility: session titles
+  readonly general: number  // default agentic work — root loop + reasoning sub-agents
+  readonly code: number     // code-writing sub-agents (a coding-tuned tier)
+  readonly fast: number     // every helper: digests, approval judgments, session titles
 }
 
 export const accumulateRoleSpend = (s: SessionStats, role: keyof RoleSpend, billed: number): SessionStats => ({
@@ -145,18 +145,18 @@ export const accumulateRoleSpend = (s: SessionStats, role: keyof RoleSpend, bill
 
 What keeps the ledger honest is that helper spend is **an event like any other**. When the loop compresses an oversized tool result and a fast-tier model writes a digest of the clipped middle, that call's usage doesn't get swallowed by the compression feature — it's emitted into the same event stream that carries tool calls and assistant turns:
 
-```ts title="packages/cli/src/events.ts"
+```ts title="packages/sdk-core/src/entities/AgentEvent.ts"
 | {
-    /** A helper-tier call ran inside the loop (e.g. a headroom middle-summary). */
+    /** A helper-tier call ran inside the loop (e.g. a compaction middle-summary). */
     readonly type: 'helper_usage' // [!code highlight]
-    readonly role: 'fast' | 'cheap'
+    readonly role: 'fast'
     readonly usage: TokenUsage
   }
 ```
 
 The other helpers report through the same bookkeeping at their own call sites. The fast-tier judge that pre-screens bash approvals — its verdict logic is a post of its own — settles up the moment it rules:
 
-```ts title="packages/cli/src/tui-solid/approval.ts"
+```ts title="packages/code/src/cli/approval.ts"
 const outcome = yield* judgeApproval(req, permitted)
 if (outcome.usage !== undefined) {
   const billed = outcome.usage.inputTokens + outcome.usage.outputTokens
@@ -164,15 +164,15 @@ if (outcome.usage !== undefined) {
 }
 ```
 
-And the cheap tier that names a session after its first exchange does the same, with a comment that doubles as the section's thesis: *the cheap tier's spend is real spend — count it.*
+And the **fast** tier that names a session after its first exchange does the same, with a comment that doubles as the section's thesis: *a session title is real spend — count it.*
 
-The result renders as one line in the activity pane: `Σ main 64k · fast 1k · cheap 160`. Read the small numbers, because they're the argument. That `cheap 160` is a session title you'd never have noticed paying for — and now you don't have to *trust* that titles are nearly free, you can *see* it. The line only appears once a non-main role has actually spent; a ledger of zeros teaches nothing, so it earns its pixels first.
+The result renders as one line in the activity pane: `Σ general 64k · fast 1k`. Read the small numbers, because they're the argument. That `fast 1k` is a stack of session titles and clip digests you'd never have noticed paying for — and now you don't have to *trust* that they're nearly free, you can *see* it. The line only appears once a non-`general` role has actually spent; a ledger of zeros teaches nothing, so it earns its pixels first.
 
 ## Attribute by agent: spend as provenance
 
 The second axis of attribution is *which agent*. [efferent](https://github.com/xandreeddev/efferent)'s `run_agent` tool spawns folder-scoped **sub-agents** — child loops sandboxed to a directory, fanning out in parallel — and every spawn persists as a node in a branching context tree you can browse, resume, and fork. The tree's mechanics are a post of their own; what matters here is one field on the node schema:
 
-```ts title="packages/core/src/entities/AgentContext.ts"
+```ts title="packages/sdk-core/src/entities/AgentContext.ts"
 /** Cumulative token usage for a node's run. */
 export const ContextUsage = Schema.Struct({
   inputTokens: Schema.Number,
@@ -194,7 +194,7 @@ export const AgentContextNode = Schema.Struct({
 
 Usage is part of the node's permanent record, next to what it did (`returnSummary`) and what it touched (`filesChanged`). It accumulates live, in the hooks wrapped around each child loop — note which fields add up and which get replaced:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 onAssistantMessage: (event) => {
   const u = event.usage
   const track = u !== undefined
@@ -212,7 +212,7 @@ That gauge/odometer split inside one struct is worth naming, because it's the sa
 
 The payoff is the `:tree` view. Every finished node renders its title, status, files changed — and its bill, `38k tok`, input plus output, right on the row. When a turn felt expensive, you no longer wonder; you open the tree and see *which subtree ate it*. The agent that burned 200k tokens grinding on a flaky test is right there, glowing, next to its three siblings that finished for 12k each. Spend stops being a session-level mystery and becomes provenance: this cost, attached to this work, forever.
 
-One attribution subtlety deserves its sentence, because getting it wrong corrupts both displays. Sub-agent spend lands on **main** in the role ledger — delegation changes the *context*, not the *brain*; the child runs the same main-role model — but it stays **off the conversation gauge**, because the child's tokens never entered the parent's context window. The ledger answers "what did this session cost?"; the gauge answers "how full is *this* context?" — different questions, and an agent UI that conflates them will lie on one of the two.
+One attribution subtlety deserves its sentence, because getting it wrong corrupts both displays. Sub-agent spend lands on **general** (or **code**) in the role ledger — delegation changes the *context*, not the *brain*; the child runs an agentic-role model, not a discount one — but it stays **off the conversation gauge**, because the child's tokens never entered the parent's context window. The ledger answers "what did this session cost?"; the gauge answers "how full is *this* context?" — different questions, and an agent UI that conflates them will lie on one of the two.
 
 ## Show it where decisions happen
 
@@ -221,13 +221,13 @@ All of that is plumbing. The product decision is *placement*, and the rule is: s
 Here's [efferent](https://github.com/xandreeddev/efferent)'s layout — activity header top-right, status bar along the bottom:
 
 ```
- ┌─ Fix the failing foo test ──────────────┐  ┌─ activity ───────────┐
- │ ❯ fix the failing test in src/foo.ts    │  │ ctx ░░ 2% 18k/1M     │
- │                                         │  │ 1.2k out · 3 turns   │
- │ ● I'll read the test first.             │  │ Σ main 17k · fast 1k │
- │ …                                       │  │ …                    │
- └─────────────────────────────────────────┘  └──────────────────────┘
-  gemini-3.5-flash · fast gemini-3.1-flash-lite ░░ 2% 18k/1M · 86% cached · sqlite · ~/proj
+ ┌─ Fix the failing foo test ──────────────┐  ┌─ activity ──────────────┐
+ │ ❯ fix the failing test in src/foo.ts    │  │ ctx ░░ 2% 18k/1M        │
+ │                                         │  │ 1.2k out · 3 turns      │
+ │ ● I'll read the test first.             │  │ Σ general 17k · fast 1k │
+ │ …                                       │  │ …                       │
+ └─────────────────────────────────────────┘  └─────────────────────────┘
+  gemini-3.5-flash · code gemini-3-pro · fast gemini-3.1-flash-lite ░░ 2% 18k/1M · 86% cached · sqlite · ~/proj
 ```
 
 Three numbers, and each one exists to change a specific behavior.
@@ -236,7 +236,7 @@ Three numbers, and each one exists to change a specific behavior.
 
 `ctx ░░ 2% 18k/1M` is the last turn's input tokens over the model's context window. It answers "how much room is left?" — and it escalates, on one scale shared by every surface that draws it:
 
-```ts title="packages/cli/src/tui-solid/presentation/statusBar.ts"
+```ts title="packages/code/src/cli/presentation/statusBar.ts"
 /** How loudly the context gauge should speak. One scale for every surface:
  *  under 70% it's bookkeeping; from 70% a fold is worth planning; from 90%
  *  the next turns may degrade — `:handoff` now. */
@@ -253,13 +253,13 @@ At `warn` the bar changes color; at `critical` it grows words — `:handoff to f
 
 ### The role ledger: when to delegate
 
-`Σ main 17k · fast 1k` is the session's economics by who billed it. Watch it across a week of sessions and it quietly answers staffing questions: is the fast tier earning its keep, or is the judge burning more than the modals it saves? Did that fan-out of four sub-agents cost less than doing the work in the main context would have — including the handoff the main context would have needed halfway through? Combined with per-node numbers in `:tree`, "should I spawn an agent or just do it here?" stops being vibes and becomes a comparison between numbers you've actually seen before.
+`Σ general 17k · fast 1k` is the session's economics by who billed it. Watch it across a week of sessions and it quietly answers staffing questions: is the fast tier earning its keep, or is the judge burning more than the modals it saves? Did that fan-out of four sub-agents cost less than doing the work in the main context would have — including the handoff the main context would have needed halfway through? Combined with per-node numbers in `:tree`, "should I spawn an agent or just do it here?" stops being vibes and becomes a comparison between numbers you've actually seen before.
 
 ### The cache percentage: whether the prefix is paying rent
 
 `86% cached` is the share of the last turn's input served from the provider's prompt cache:
 
-```ts title="packages/cli/src/tui-solid/presentation/statusBar.ts"
+```ts title="packages/code/src/cli/presentation/statusBar.ts"
 /** The share of the last turn's context served from the provider's cache —
  *  the caching story in one number. Undefined until a turn reports real usage. */
 export const cachePercent = (cacheRead: number, input: number): number | undefined =>
@@ -272,7 +272,7 @@ Cache reads are billed at a fraction of full input price, so on long sessions th
 
 Visibility tells you; budgets stop you. The two are complements, not substitutes — a meter can't prevent a runaway fan-out at 2 a.m., and a hard cap with no meter just fails mysteriously. In [efferent](https://github.com/xandreeddev/efferent), all sub-agents spawned within one top-level turn drain a shared token pool (1M by default), and the same `drainPool` you saw in the node-tracking hook is what depletes it — measurement and enforcement consume *one* number, extracted once:
 
-```ts title="packages/core/src/usecases/tokenBudget.ts"
+```ts title="packages/sdk-core/src/usecases/tokenBudget.ts"
 /** Tokens a single LLM call costs the pool: what the provider bills. */
 export const usageCost = (u: ContextUsage): number => u.inputTokens + u.outputTokens
 
@@ -295,7 +295,7 @@ Honest limits, because a post selling visibility shouldn't hide its own blind sp
 
 **The gauge is a last-known-good, not a live sensor.** It shows the input count from the most recent provider reply. Paste a novel into the composer, or let a tool dump 40k tokens of build log into the buffer, and the gauge is stale until the next response reports. The resume estimate is cruder still — characters over four — which is exactly why it wears the `~`. The meter never claims more precision than it has, but you have to read the claim.
 
-**The persisted ledger is partial.** Receipts ride on root-loop assistant messages; helper and sub-agent spend lives in events and tree nodes. So a resumed session's role ledger collapses to `main` — the totals are right, the attribution is coarser than it was live. Fixable by persisting role tags with the usage blob; not yet done.
+**The persisted ledger is partial.** Receipts ride on root-loop assistant messages; helper and sub-agent spend lives in events and tree nodes. So a resumed session's role ledger collapses to `general` — the totals are right, the attribution is coarser than it was live. Fixable by persisting role tags with the usage blob; not yet done.
 
 **And the Goodhart trap.** Make a number visible and people optimize it. The session that matters is not the one that spent the fewest tokens; it's the one that shipped the fix. A 40k-token session that lands the change is cheaper than three 15k-token sessions that don't — and a meter, watched too literally, teaches the wrong lesson. The real denominator is outcome per session, and no status bar renders that yet.
 

@@ -53,7 +53,7 @@ That's the full model: build one big description out of small ones, run it once 
 
 Effect's dependency story starts with `Context.Tag`: a service is declared as a *type* plus a unique identifier, with no implementation anywhere in sight.
 
-```ts title="packages/core/src/ports/ConversationStore.ts"
+```ts title="packages/sdk-core/src/ports/ConversationStore.ts"
 export class ConversationStoreError extends Data.TaggedError(
   'ConversationStoreError',
 )<{
@@ -88,7 +88,7 @@ This is ports-and-adapters, but with the dependency direction enforced by the co
 
 A `Layer<Out, Err, In>` is a recipe for building services out of other services. `Layer.succeed` wraps a value, `Layer.effect` runs an effect to construct one, `Layer.scoped` ties the service to a resource lifetime. Like effects, layers are values — so wiring an application is an expression. Here's the deep end first; every operator in it gets unpacked right below:
 
-```ts title="packages/cli/src/main.ts"
+```ts title="packages/code/src/main.ts"
 // Credentials + settings feed the model/search tiers. Both are provided at the
 // bottom so `ModelLive` (AuthStore + SettingsStore) and `WebSearchLive`
 // (AuthStore) resolve against them, and both stay exposed for `main` to read.
@@ -122,7 +122,7 @@ This is also where the prelude's loose end ties off. The program from Act I carr
 
 Two more semantics hide in plain sight. First, **memoization**: layers are built once per layer *value*. Reference the same `const` in five places and Effect constructs one instance — [efferent](https://github.com/xandreeddev/efferent)'s eval environment leans on this, naming `const FsLive = LocalFileSystemLive` precisely so two references resolve to a single `FileSystem`. Second, **a layer can be chosen by a program**, because of course it can — it's a value:
 
-```ts title="packages/adapters/src/database/migrator.ts"
+```ts title="packages/sdk-adapters/src/database/migrator.ts"
 export const StoresLive = Layer.unwrapEffect(
   Effect.gen(function* () {
     const url = yield* Config.option(Config.string('EFFERENT_DB_URL'))
@@ -166,7 +166,7 @@ export const EvalEnvLive: Layer.Layer<EvalEnv> = Layer.mergeAll(
 
 Read it against `AppLive` above — it's the same shape, with three substitutions. The SQL stores become in-memory maps (CI shouldn't need Docker). Credentials come from env vars instead of the interactive `:login` flow. And the human approval modal becomes a five-line policy:
 
-```ts title="packages/core/src/ports/Approval.ts"
+```ts title="packages/sdk-core/src/ports/Approval.ts"
 export const ApprovalAllowAllLive = Layer.succeed(
   Approval,
   Approval.of({
@@ -217,7 +217,7 @@ One discipline keeps the layer machinery from going wrong: **layers answer "the 
 
 [efferent](https://github.com/xandreeddev/efferent)'s `LanguageModel` is therefore one layer whose implementation routes per call:
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 streamText: (options) =>
   Stream.unwrapScoped( // [!code highlight]
     Effect.gen(function* () {
@@ -245,7 +245,7 @@ No `instanceof` ladders, no error-code constants, no guessing what a catch block
 
 In an agent, the error channel has an unusual second consumer: not just humans, but *the model*. [efferent](https://github.com/xandreeddev/efferent)'s tools all declare `failureMode: 'return'` — a handler failure becomes a tool **result** the model reads and reacts to, not an exception that kills the turn. The interesting case is failures the tool handler never sees, because the model's arguments didn't even decode:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 // Wrap the toolkit's handler so a model-caused decode failure
 // becomes a tool *result* instead of aborting the turn.
 const handle = (name: unknown, params: unknown) =>
@@ -266,7 +266,7 @@ The highlighted line encodes a policy that would be mush in a `try/catch` world:
 
 And sometimes the most expressive thing in a signature is the error type `never`:
 
-```ts title="packages/core/src/usecases/autoApproval.ts"
+```ts title="packages/sdk-core/src/usecases/autoApproval.ts"
 export const judgeApproval = (
   req: ApprovalRequest,
   permittedFolders: ReadonlyArray<string>,
@@ -293,7 +293,7 @@ One turn of [efferent](https://github.com/xandreeddev/efferent) can have four to
 
 Concurrency limits in Effect are an option you pass, not a worker pool you build:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const outcome = yield* LanguageModel.generateText({
   prompt,
   toolkit,
@@ -307,7 +307,7 @@ const outcome = yield* LanguageModel.generateText({
 
 A `Queue` is the classic producer/consumer seam, used here to decouple agent fibers from the UI:
 
-```ts title="packages/cli/src/tui-solid/runtime.ts"
+```ts title="packages/code/src/cli/runtime.ts"
 const eventQueue = yield* Queue.unbounded<AgentEvent>()
 const hooks = makeEventHooks(eventQueue) // every loop hook offers onto the queue
 // …the agent loop runs with these hooks; one consumer fiber drains the queue
@@ -315,35 +315,31 @@ const hooks = makeEventHooks(eventQueue) // every loop hook offers onto the queu
 
 Hooks deep inside the loop — assistant deltas, tool starts, sub-agent spawns — offer events onto the queue from whatever fiber they're on; one consumer fiber drains it into Solid signals. Unbounded is a deliberate choice ratified by the type: rendering must never apply backpressure to an agent turn. (What happens on the other side of that queue — fine-grained SolidJS signals, no React — is a post of its own.)
 
-### Semaphore: mutual exclusion per key
+### Semaphore: mutual exclusion done right
 
-[efferent](https://github.com/xandreeddev/efferent)'s sub-agents are sandboxed to folders, which makes *disjoint* folders safe to run concurrently by construction. Two spawns into the *same* folder would race on the same files — so each folder gets a one-permit semaphore, created on demand:
+A bash-heavy fan-out creates a contention problem: several sub-agents can want to run a command *at the same time*, and each unapproved one may need the human. You do not want three approval sheets stacked on screen, and you *also* don't want every command in the fleet queued behind one slow prompt. The fix is a one-permit semaphore — but the interesting part is exactly *what* it guards:
 
-```ts title="packages/core/src/usecases/folderLock.ts"
-export type FolderLocks = Ref.Ref<ReadonlyMap<string, Effect.Semaphore>>
+```ts title="packages/code/src/cli/approval.ts"
+const gate = Effect.unsafeMakeSemaphore(1)
 
-/** Get-or-create the folder's semaphore atomically (unsafeMake is pure). */
-const lockFor = (
-  locks: FolderLocks,
-  folder: string,
-): Effect.Effect<Effect.Semaphore> =>
-  Ref.modify(locks, (m) => {
-    const existing = m.get(folder)
-    if (existing) return [existing, m] as const
-    const sem = Effect.unsafeMakeSemaphore(1)
-    const next = new Map(m)
-    next.set(folder, sem)
-    return [sem, next] as const
-  })
-
-/** Run `effect` holding the folder's exclusive permit. */
-export const withFolderLock =
-  (locks: FolderLocks, folder: string) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    Effect.flatMap(lockFor(locks, folder), (sem) => sem.withPermits(1)(effect))
+// The fast LLM judge runs OUTSIDE the gate — concurrent agents are judged in
+// parallel, and an auto-allowed command never waits on anyone. ONLY the human
+// modal is serialized, one sheet at a time:
+const decision = yield* gate.withPermits(1)(
+  Effect.gen(function* () {
+    // a waiter that wins the permit re-checks the grant ledger FIRST —
+    // an "allow for this session" from the queue ahead answers this one too
+    if (yield* coveredNow(req, grantedFolder)) {
+      return { kind: 'allow', scope: 'once' } as const
+    }
+    return yield* ask(req, hint) // park the fiber on the modal
+  }),
+)
 ```
 
-`Ref.modify` makes the get-or-create atomic without a mutex around the map (the `unsafe` in `unsafeMakeSemaphore` only means it constructs outside an Effect — creation is pure, which is exactly what lets it run inside `Ref.modify`). `withPermits(1)` brackets the effect it wraps — acquire the permit, run, release — and the release holds on failure and interruption too, the same guarantee the interlude's `acquireUseRelease` made. And the file's doc comment owns an honest limitation: ancestor/descendant overlap (a spawn into `pkg/` racing one into `pkg/sub/`) is *deliberately* not locked, because detecting it means holding multiple locks — buying a deadlock risk for a case the prompt already steers away from. Concurrency design is tradeoffs; the primitives just make them small enough to see.
+`withPermits(1)` brackets the effect it wraps — acquire the permit, run, release — and the release holds on failure and interruption too, the same guarantee the interlude's `acquireUseRelease` made. (The `unsafe` in `unsafeMakeSemaphore` only means it constructs outside an Effect — creation is pure.) Two judgment calls are the lesson, not the primitive. First, the semaphore guards the *narrowest* thing that needs exclusivity: the judge stays parallel, so a fleet isn't bottlenecked on one classifier — only the actual human sheet serializes. Second, the critical section re-checks shared state on entry (`coveredNow`), so a "yes, for the session" granted by the request ahead in the queue silently answers everyone behind it instead of prompting again. A semaphore is easy; choosing the smallest correct critical section is the design.
+
+(efferent used to put a per-folder write-lock semaphore on sub-agent spawns too; that's gone — concurrent *writers* are now sequenced by the prompt, "read in parallel, write one at a time," rather than by a lock, because folder locks couldn't see the ancestor/descendant overlap that actually bites. The surviving semaphore is the one above, where exclusivity is genuinely required.)
 
 ### Ref: shared state that admits it's shared
 
@@ -351,7 +347,7 @@ A `Ref` is a mutable cell whose every operation is atomic, and the problem it so
 
 [efferent](https://github.com/xandreeddev/efferent) uses exactly that as a spend gate: every sub-agent spawned within a turn drains a single shared token pool —
 
-```ts title="packages/core/src/usecases/tokenBudget.ts"
+```ts title="packages/sdk-core/src/usecases/tokenBudget.ts"
 /** Default pool: 1M tokens per top-level turn across all sub-agents. */
 export const DEFAULT_SUB_AGENT_TOKEN_BUDGET = 1_000_000
 
@@ -387,7 +383,7 @@ const child = runChildAgent(task).pipe(
 
 No global to mutate and carefully reset, no context parameter threaded through forty signatures. [efferent](https://github.com/xandreeddev/efferent) carries each agent's identity this way — which is what lets a tool handler built once at the composition root know, at call time, *which* agent in *which* subtree is invoking it:
 
-```ts title="packages/core/src/usecases/runContext.ts"
+```ts title="packages/sdk-core/src/usecases/runContext.ts"
 export interface RunContext {
   readonly rootConversationId: ConversationId | null // null = the top-level run
   readonly parentNodeId: ContextNodeId | null
@@ -405,7 +401,7 @@ The highlighted field is my favorite composition in the codebase: the token pool
 
 The slowest dependency in a coding agent is the person running it. When a bash command needs approval, the requesting fiber simply parks:
 
-```ts title="packages/cli/src/tui-solid/approval.ts"
+```ts title="packages/code/src/cli/approval.ts"
 const ask = (req: ApprovalRequest) =>
   Effect.async<ApprovalDecision>((resume) => {
     pending = (d) => resume(Effect.succeed(d)) // …
@@ -415,7 +411,7 @@ const ask = (req: ApprovalRequest) =>
   })
 ```
 
-`Effect.async` adapts callback-world into a fiber: the agent suspends until the overlay's key handler calls `resume`. The highlighted return value is the detail that pays rent — an optional cleanup effect that runs *if the fiber is interrupted while parked*. Esc kills the turn; the modal closes; nothing dangles. A one-permit semaphore in front serializes concurrent requests (parallel sub-agents can want bash at once), and each waiter re-checks the rule ledgers when its turn comes — so one "allow for session" answers the whole queue behind it. The TUI's exit works the same way in miniature, via a `Deferred`: a one-shot cell that starts empty, can be completed exactly once, and parks any fiber that awaits it until that moment. The quit handler completes it, the main fiber awaits it, and that single value *is* the shutdown protocol — no flags, no polling.
+`Effect.async` adapts callback-world into a fiber: the agent suspends until the overlay's key handler calls `resume`. The highlighted return value is the detail that pays rent — an optional cleanup effect that runs *if the fiber is interrupted while parked*. Esc kills the turn; the modal closes; nothing dangles. The one-permit gate from the Semaphore section sits in front, so concurrent requests serialize onto a single modal and its permit releases on that same interruption. The TUI's exit works the same way in miniature, via a `Deferred`: a one-shot cell that starts empty, can be completed exactly once, and parks any fiber that awaits it until that moment. The quit handler completes it, the main fiber awaits it, and that single value *is* the shutdown protocol — no flags, no polling.
 
 ### The unifying semantics: interruption
 
@@ -425,7 +421,7 @@ Press Esc mid-turn and watch what one interrupt does: the in-flight `generateTex
 
 One more consequence of services-as-tags: a *library* can ship the tag and you ship the layer. [efferent](https://github.com/xandreeddev/efferent)'s port for the LLM isn't a port I wrote — it's `@effect/ai`'s `LanguageModel` service; the router from earlier is just its live layer. The same package treats tools as schema-typed values:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const ReadFile = Tool.make('read_file', {
   description:
     "Read a file's contents with line numbers. Use offset/limit to page through large files.",

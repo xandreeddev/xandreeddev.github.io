@@ -21,7 +21,7 @@ One paragraph of Effect for readers who haven't met it. An `Effect<A, E, R>` is 
 
 A span is the unit of a trace — a named, timed interval with attributes, nested under whatever span was open when it started. In the SDK world a span is an object you create, hold, and end. In Effect it's a *combinator* you wrap around a description:
 
-```ts title="packages/core/src/usecases/runAgent.ts"
+```ts title="packages/sdk-core/src/usecases/runAgent.ts"
 runAgentLoop({ system, messages, toolkit, maxSteps }).pipe(
   Effect.withSpan('agent.run', {
     attributes: {
@@ -38,7 +38,7 @@ runAgentLoop({ system, messages, toolkit, maxSteps }).pipe(
 
 Two things follow that don't in the SDK model. First, **the span context is ambient**, carried on the fiber, not passed as an argument. A function thirty calls deep can open a child span without anyone threading a tracer down to it — and the child nests under the parent automatically because "the current span" is fiber state, not a variable you plumbed. Second, you can reach the active span and annotate it mid-effect, which is how a run's totals land on the run span *after* the loop that computed them has finished:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 // The turn spans have closed, so the current span is the enclosing run.
 yield* Effect.annotateCurrentSpan({
   'agent.turns': turnIndex,
@@ -54,7 +54,7 @@ yield* Effect.annotateCurrentSpan({
 
 Metrics are counters, gauges, and histograms — the numbers a dashboard graphs over time. Effect's `Metric` is a first-class value: you *define* it once as a module-level constant, and *record* into it at the chokepoints, and it is completely inert until something at the edge wires up a meter. Here's the agent's metric set, abridged:
 
-```ts title="packages/core/src/telemetry/metrics.ts"
+```ts title="packages/sdk-core/src/telemetry/metrics.ts"
 const tokensTotal = Metric.counter('gen_ai_tokens_total', {
   description: 'LLM tokens billed (tags: role, model, type=input|output|cache).',
   incremental: true,
@@ -76,7 +76,7 @@ A `Metric.counter` is not a registered handle on some global meter — it's a de
 
 Recording is where the one real discipline of metrics lives: **tags**. A tag is a dimension you can later group by — `role`, `provider`, `model`. Tags multiply: every distinct combination of tag values is a separate time series your backend must store. Tag a counter with something unbounded — a request id, a full error message, a user prompt — and you've built a cardinality bomb that takes the metrics backend down with it. Effect makes tagging composable (`Metric.tagged` returns a new tagged metric), which means the cardinality of a metric is *visible at the record site*, in code you can review:
 
-```ts title="packages/core/src/telemetry/metrics.ts"
+```ts title="packages/sdk-core/src/telemetry/metrics.ts"
 export const recordLlmCall = (
   role: string,
   provider: string,
@@ -109,7 +109,7 @@ export const recordLlmCall = (
 
 `role`, `provider`, `model`, and the literal `'input'`/`'output'`/`'cache'` are all small closed sets — the product stays in the dozens of series, not the millions. The error metric makes the discipline explicit, because errors are where the temptation to tag a raw message is strongest:
 
-```ts title="packages/core/src/telemetry/metrics.ts"
+```ts title="packages/sdk-core/src/telemetry/metrics.ts"
 /** A `_tag` / slug is a short identifier; anything wordy is a free-text
  *  message we must NOT use as a metric label (cardinality bomb). */
 const clipErr = (error: string): string => {
@@ -132,7 +132,7 @@ A typed error's `_tag` — `RateLimit`, `ContextTooLong` — is a fine label: sh
 
 Effect's logger is built in too — `Effect.logInfo`, `logWarning`, `logError` — and two features make logs first-class telemetry rather than `console.log` with extra steps. The first is **annotations**: `Effect.annotateLogs` attaches key–value pairs to *every* log emitted within its scope, inherited down the whole fiber tree. The agent stamps the conversation id once, at the top of a run:
 
-```ts title="packages/core/src/usecases/runAgent.ts"
+```ts title="packages/sdk-core/src/usecases/runAgent.ts"
 runAgentLoop({ … }).pipe(
   Effect.withSpan('agent.run', { /* … */ }),
   Effect.annotateLogs({ conversationId }), // [!code highlight]
@@ -147,7 +147,7 @@ Here's the payoff the first three sections have been setting up. The instrumente
 
 efferent's exporter is the Effect-native OTLP layer — no heavyweight OpenTelemetry SDK, just an HTTP POST of the serialized spans and metrics:
 
-```ts title="packages/adapters/src/telemetry/otlp.ts"
+```ts title="packages/sdk-adapters/src/telemetry/otlp.ts"
 export const OtlpTelemetryLive: Layer.Layer<never> = Layer.unwrapEffect(
   Effect.gen(function* () {
     const baseUrl = yield* Config.string('OTEL_EXPORTER_OTLP_ENDPOINT').pipe(
@@ -166,7 +166,7 @@ export const OtlpTelemetryLive: Layer.Layer<never> = Layer.unwrapEffect(
 
 And here is the entire on/off switch — a single settings read at the edge that picks the exporter layer or the *empty* one:
 
-```ts title="packages/cli/src/main.ts"
+```ts title="packages/code/src/main.ts"
 const TelemetryLive: Layer.Layer<never> = Layer.unwrapEffect(
   Effect.gen(function* () {
     const settings = yield* (yield* SettingsStore).load(process.cwd(), homedir())

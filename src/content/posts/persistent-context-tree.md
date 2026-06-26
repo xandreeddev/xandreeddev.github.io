@@ -29,7 +29,7 @@ Then, twenty minutes later, you need a follow-up. "Good — now apply that retry
 
 Start with the data, because the data is the thesis. When a sub-agent finishes, it doesn't evaporate — it settles into a row shaped like this:
 
-```ts title="packages/core/src/entities/AgentContext.ts"
+```ts title="packages/sdk-core/src/entities/AgentContext.ts"
 export const EdgeKind = Schema.Literal('spawned', 'branched', 'resumed')
 
 export const AgentContextNode = Schema.Struct({
@@ -60,13 +60,14 @@ That's the whole bet in schema form. Now, how do nodes get made?
 
 [efferent](https://github.com/xandreeddev/efferent) has exactly one delegation tool. Not a tool per pre-configured agent role, not a YAML registry of personas — one generic `run_agent` whose parameters the model fills in at call time:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 const RunAgentTool = Tool.make('run_agent', {
   description:
     'Spawn a sub-agent to do focused work scoped to a folder. It reads anywhere but ' +
     'writes/runs bash only inside that folder, runs in its own persisted context, and ' +
-    'returns { summary, filesChanged, nodeId }. Prefer it when a change is localized ' +
-    'to one area; it keeps your own context focused. … ' +
+    'works in the BACKGROUND — this call returns immediately with { nodeId, name, status }. ' +
+    'Spawn several at once to fan out; collect their results with wait_for_agents. ' +
+    'Prefer it when a change is localized to one area; it keeps your own context focused. … ' +
     'DEFAULT TO A FRESH SPAWN: one agent = one piece of work; a new task gets a new ' +
     "agent even in the same folder (fresh context is cheaper and more focused — a " +
     "resume re-feeds the node's entire history every turn). Reuse a node only when " +
@@ -79,9 +80,9 @@ const RunAgentTool = Tool.make('run_agent', {
     seedMode: Schema.optional(Schema.Literal('resume', 'branch', 'handoff')),
   },
   success: Schema.Struct({
-    summary: Schema.String,
-    filesChanged: Schema.Array(Schema.String),
-    nodeId: Schema.String, // [!code highlight]
+    nodeId: ContextNodeId,  // [!code highlight] — the claim ticket; redeem it later
+    name: Schema.String,
+    status: Schema.Literal('running'), // the spawn is async — it's off and running
   }),
   failure: Failure,
   failureMode: 'return', // a failed spawn is data the model reads, not a dead turn
@@ -92,7 +93,7 @@ Three things in this declaration deserve a slow look.
 
 **The sandbox is a folder.** A spawned sub-agent can *read* anywhere in the workspace — context is cheap to gather and starving it helps nobody — but its writes and its bash commands are confined to the `folder` it was scoped to. If that folder contains a `SCOPE.md` file, its body gets injected into the sub-agent's system prompt as ambient context: the directory's local rules, conventions, and warnings, known automatically by every agent that ever works there. Folder scoping is also what makes parallelism safe later, so file it away. Nesting is bounded too — a sub-agent can spawn its own sub-agents, but past a depth limit (default 2) the tool returns a model-readable refusal: *"sub-agent nesting limit (2) reached — do this part yourself."*
 
-**The `nodeId` in the success type is the claim ticket.** This is the line that breaks the subprocess model. The parent doesn't just get a summary back; it gets a durable reference to the context that produced the summary. Every later section of this post is a different way of redeeming that ticket.
+**The `nodeId` in the success type is the claim ticket.** This is the line that breaks the subprocess model. The spawn returns *immediately* — the sub-agent runs in the background — so what comes back isn't a summary at all; it's a durable reference to the context being produced. The parent keeps working, then redeems the ticket: `wait_for_agents` collects the finished summaries, or the `nodeId` is held to resume, branch, or browse the node any time later. (The fleet protocol that runs these spawns in parallel and reports them back is its own post; here the point is that the ticket outlives the call.) Every later section is a different way of redeeming it.
 
 **The description is the policy.** Read it again — it isn't documentation, it's *teaching*. It tells the model when delegation pays ("a change localized to one area"), what the default should be ("DEFAULT TO A FRESH SPAWN: one agent = one piece of work"), why ("fresh context is cheaper and more focused — a resume re-feeds the node's entire history every turn"), and the one condition under which reuse is justified ("a direct follow-up on that node's OWN work"). Tool descriptions are the most underrated prompt surface in agent design: this paragraph runs on every single turn, exactly where the decision gets made, and it encodes an economic argument the model can actually apply. When people ask where the "when should the agent spawn vs. reuse" logic lives, the answer is: right there, in the schema.
 
@@ -108,7 +109,7 @@ The answer is that "continue that earlier work" is not one operation. It's a poi
 
 Here's the seeding logic, simplified from the `run_agent` handler:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 const node = yield* store.get(nodeId)
 const brief = yield* buildStalenessBrief({          // §"The world moves", below
   workspaceDir: displayRoot,
@@ -146,7 +147,7 @@ The highlighted line is the entire economics of `handoff` in one expression: ins
 
 The fix is to render the whole history as one labelled transcript string inside a *single* user message:
 
-```ts title="packages/core/src/usecases/handoff.ts"
+```ts title="packages/sdk-core/src/usecases/handoff.ts"
 export const generateHandoffBrief = (view: ReadonlyArray<AgentMessage>) =>
   Effect.gen(function* () {
     const prompt = Prompt.make([
@@ -172,7 +173,7 @@ A persisted context has a failure mode an ephemeral one can't: it outlives the w
 
 This is why every node gets stamped with `workspaceRef` — the repo's git `HEAD` — when its run finishes. Any later `resume` or `branch` compares the stamp against the current `HEAD`. If they differ, the spawner prepends a **staleness brief** to the task: which ref range moved, a `git diff --stat` (the per-file changed-lines summary) scoped to the node's folder, and one imperative sentence:
 
-```ts title="packages/core/src/usecases/staleness.ts"
+```ts title="packages/sdk-core/src/usecases/staleness.ts"
 export const stalenessNote = (args: {
   oldRef: string
   newRef: string
@@ -194,13 +195,13 @@ Note what staleness is *not*: an eviction. A stale node is still capital — its
 
 ## Fan-out wants a budget, not a leash
 
-Sub-agents earn their keep in parallel. One assistant turn can emit several `run_agent` calls, and the loop resolves a turn's tool calls concurrently (four at a time by default) — so "audit these three packages" genuinely fans out into three simultaneous investigations. Folder scoping is what makes that safe *by construction*: agents sandboxed to disjoint folders cannot race each other's writes. Spawns into the *same* folder would race, so each folder gets a lock and same-folder spawns queue behind one another — the semaphore mechanics are a post of its own; the product-level point is just that disjoint work parallelizes freely and overlapping work serializes automatically, with nothing for the model to coordinate.
+Sub-agents earn their keep in parallel. One assistant turn can emit several `run_agent` calls, and because each returns immediately, all of them are off and running in the background at once — so "audit these three packages" genuinely fans out into three simultaneous investigations. Folder scoping is what keeps read-only fan-out safe: agents sandboxed to disjoint folders cannot race each other's writes, so research and audits parallelize freely. *Writes* are the hazard — there is no lock, so two sub-agents editing the same area at once would corrupt each other's edits. The discipline that prevents it is prompted, not enforced: **read in parallel, write one at a time** — the model fans out investigations, then runs writers sequentially, `wait_for_agents` on each before spawning the next, ordered by dependency. (The fleet protocol underneath — non-blocking spawn, `wait_for_agents`, inter-agent messages — is its own post; the product-level point is that disjoint work parallelizes and overlapping writes are sequenced deliberately, not by a hidden lock.)
 
 Parallelism has a second failure mode, though, and it isn't correctness — it's the bill. Depth limits and step caps bound how *long* a tree can run, but a depth-2 tree with enthusiastic fan-out is still an unbounded spend. So all sub-agents spawned within one top-level turn share a single **token pool** — default one million billed tokens, adjustable with `:set subAgentTokenBudget`. Shared, not sliced: children race for the remainder rather than receiving pre-committed allocations they might never use. Every LLM call any sub-agent makes drains the pool by what the provider actually bills for it.
 
 What happens at exhaustion is the part designed with care, because both audiences of the failure are models:
 
-```ts title="packages/core/src/usecases/tokenBudget.ts"
+```ts title="packages/sdk-core/src/usecases/tokenBudget.ts"
 /** Default pool: 1M tokens per top-level turn across all sub-agents. */
 export const DEFAULT_SUB_AGENT_TOKEN_BUDGET = 1_000_000
 
@@ -233,7 +234,7 @@ Capital you can't inspect is just a bigger database. The `:tree` command in [eff
 
 Each row is a rendering of one node, and the row model is a compact restatement of everything this post has covered:
 
-```ts title="packages/cli/src/tui-solid/presentation/contextTreeView.ts"
+```ts title="packages/code/src/cli/presentation/contextTreeView.ts"
 export interface TreeNodeDisplay {
   kind: 'node'
   label: string            // the spawner-given title, else the folder basename

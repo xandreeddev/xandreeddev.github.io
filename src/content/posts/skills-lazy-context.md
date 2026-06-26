@@ -58,7 +58,7 @@ That's the whole format. No JSON schema, no SDK import, no build step. Anyone on
 
 Inside the agent, a skill is barely more than a pointer. Look at what the entity type actually stores:
 
-```ts title="packages/core/src/entities/Skill.ts"
+```ts title="packages/sdk-core/src/entities/Skill.ts"
 export interface Skill {
   readonly name: string
   readonly description: string
@@ -73,7 +73,7 @@ The highlighted line is the design decision this post is named after. The body i
 
 So how does the model learn the skill exists? At startup, [efferent](https://github.com/xandreeddev/efferent) injects the names and descriptions — only those — into the system prompt. The rendering is a dozen lines:
 
-```ts title="packages/core/src/prompts/coder.ts"
+```ts title="packages/code/src/prompts/coder.ts"
 const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   if (skills.length === 0) return ''
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n') // [!code highlight]
@@ -129,7 +129,7 @@ The subtler half of the design is *who reads the index*. There's no keyword matc
 
 The fetch half of lazy loading is deliberately boring. `read_skill` is a tool definition sitting in the same toolkit as `read_file` and `grep`, declared with the same schema machinery:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const ReadSkill = Tool.make('read_skill', {
   description:
     'Read the full body of a named skill (a markdown procedure). Use when ' +
@@ -152,7 +152,7 @@ export const ReadSkill = Tool.make('read_skill', {
 
 This sameness is a feature, not a shrug. The model already knows how to call tools; pulling its own documentation is the identical motion to reading a file, so there's nothing new to teach and nothing new to go wrong. The handler is a map lookup and a disk read:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 read_skill: ({ name }) =>
   Effect.gen(function* () {
     const skill = skillByName.get(name)
@@ -179,7 +179,7 @@ Two details pay rent here. First, the failure: `failureMode: 'return'` means a b
 
 Nothing registers a skill. [efferent](https://github.com/xandreeddev/efferent) finds them at startup by walking a search path of `.efferent/skills/` directories, from the working directory up through every ancestor, ending at your home directory:
 
-```ts title="packages/core/src/usecases/loadSkills.ts"
+```ts title="packages/code/src/usecases/loadSkills.ts"
 /** cwd/.efferent/skills, each ancestor up to root, then home (deduped). */
 const skillSearchPath = (cwd: string, homeDir: string) => {
   const out: string[] = []
@@ -216,7 +216,7 @@ The convention: a file named `AGENT.md` anywhere from the filesystem root down t
 
 Because this content rides along on every request, it's the one place the mechanism enforces a budget:
 
-```ts title="packages/core/src/usecases/discoverInstructionFiles.ts"
+```ts title="packages/code/src/usecases/discoverInstructionFiles.ts"
 /** Per-file char cap in the rendered prompt. */
 export const MAX_INSTRUCTION_FILE_CHARS = 4_000
 /** Total char budget for the whole `# Instructions` section. */
@@ -236,7 +236,7 @@ export const discoverInstructionFiles = (
   })
 ```
 
-Four thousand characters per file, twelve thousand for the whole section — roughly 1k and 3k tokens. A file over its cap is cut with a visible `[truncated]` marker; files past the total budget surface as a one-line *omitted* notice instead of silently vanishing, so the model knows its picture is incomplete rather than believing a partial one. Each file renders under a header carrying its scope — `## AGENT.md (scope: /repo/packages/core)` — so guidance is legible as workspace-wide versus package-local versus personal. And where skills dedupe by *name* (shadowing — one wins), instruction files dedupe by *normalized content* (stacking — all distinct files render). Skills are alternatives; constraints accumulate.
+Four thousand characters per file, twelve thousand for the whole section — roughly 1k and 3k tokens. A file over its cap is cut with a visible `[truncated]` marker; files past the total budget surface as a one-line *omitted* notice instead of silently vanishing, so the model knows its picture is incomplete rather than believing a partial one. Each file renders under a header carrying its scope — `## AGENT.md (scope: /repo/packages/sdk-core)` — so guidance is legible as workspace-wide versus package-local versus personal. And where skills dedupe by *name* (shadowing — one wins), instruction files dedupe by *normalized content* (stacking — all distinct files render). Skills are alternatives; constraints accumulate.
 
 The two mechanisms together give you the placement rule, and it's worth stating as a rule because every team relearns it the slow way: **if it must be true on every task, it goes in AGENT.md; if it's what to do for one kind of task, it's a skill.** Constraints are eager because they can't depend on the model's judgment to be loaded. Procedures are lazy because most tasks don't need most procedures. When you find a five-step process inside an AGENT.md, it's a skill paying eager rent; when you find "never force-push" inside a skill, it's a constraint gambling on relevance.
 
@@ -244,7 +244,7 @@ The two mechanisms together give you the placement rule, and it's worth stating 
 
 There's a third file in the family, for knowledge that's true of a *place* rather than a project: `SCOPE.md`. Drop one in a directory and its body becomes ambient context for any agent working there. [efferent](https://github.com/xandreeddev/efferent) discovers these per-folder:
 
-```ts title="packages/core/src/usecases/discoverScopeTree.ts"
+```ts title="packages/sdk-core/src/usecases/discoverScopeTree.ts"
 export const getScopePromptBody = (
   folder: string,
 ): Effect.Effect<string | undefined, never, FileSystem> =>

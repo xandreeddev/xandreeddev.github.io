@@ -25,7 +25,7 @@ An LLM deciding which security prompts you see *should* make you suspicious. The
 
 Everything below hangs off a single service. In ports-and-adapters terms it's a **port**: an interface the core package declares without implementing, so different modes can answer the same question differently. (In Effect, a port is a `Context.Tag` — a type plus a unique identifier, implementation supplied later as a layer. The full Effect tour is a post of its own; that gloss carries you through this one.)
 
-```ts title="packages/core/src/ports/Approval.ts"
+```ts title="packages/sdk-core/src/ports/Approval.ts"
 export interface ApprovalRequest {
   readonly tool: string     // 'Bash' — the only asker today
   readonly summary: string  // what will run, verbatim
@@ -51,7 +51,7 @@ Here is the observation the auto mode is built on: most commands an agent runs a
 
 So before any dialog, an unmatched command goes to the **judge**: one completion on the **fast** role — [efferent](https://github.com/xandreeddev/efferent)'s settings name for the model used in latency-sensitive helper calls (point it at something small with `:set fastModel`; unset, it falls back to the main model — the roles ride the runtime provider routing, a post of its own). The judge is asked a single question: *does this command stay inside the permitted folders, doing ordinary development work?* The **permitted folders** are the heart of the design — the working directory you opened the agent in, plus every folder a previous answer has granted. The prompt is short enough to read whole, and it's the best artifact in the feature:
 
-```ts title="packages/core/src/usecases/autoApproval.ts"
+```ts title="packages/sdk-core/src/usecases/autoApproval.ts"
 export const buildJudgePrompt = (input: {
   readonly tool: string
   readonly summary: string // the command, verbatim
@@ -82,7 +82,7 @@ Three sentences in there carry the design. **"This is routing, not enforcement"*
 
 The reply contract is one JSON object, and the parser holds the model to it with cold strictness — as a Schema, not as hand-rolled parsing:
 
-```ts title="packages/core/src/usecases/autoApproval.ts"
+```ts title="packages/sdk-core/src/usecases/autoApproval.ts"
 // JudgeVerdict = { verdict: 'allow' | 'prompt'; folder?: string; reason?: string }
 const JudgeReply = Schema.parseJson(
   Schema.Struct({
@@ -112,7 +112,7 @@ And silent doesn't mean invisible. Each judge allow drops a dim `fast approved: 
 
 Now the suspicious part. The judge is an LLM call, and LLM calls fail in a dozen mundane ways: no API key configured for the fast model, a 429 at the wrong moment, a timeout, a model that answers in haiku. If any of those failures could slip a command through unprompted, the auto mode would be a security hole with good intentions. The function's signature is where that gets settled — one line of Effect first, for anyone new to it: an `Effect<A, E, R>` is a program that succeeds with `A`, fails with `E`, and needs services `R`, and `E` is a real type the compiler tracks, not documentation.
 
-```ts title="packages/core/src/usecases/autoApproval.ts"
+```ts title="packages/sdk-core/src/usecases/autoApproval.ts"
 // JudgeOutcome = JudgeVerdict + the fast-tier tokens the judgment billed
 export const judgeApproval = (
   req: ApprovalRequest,
@@ -142,7 +142,7 @@ Why folders? Because that's the shape of the decision you actually made. When th
 
 Here's the whole cascade as the TUI implements it, condensed from the real layer:
 
-```ts title="packages/cli/src/tui-solid/approval.ts"
+```ts title="packages/code/src/cli/approval.ts"
 const allowOnce = { kind: 'allow', scope: 'once' } as const
 
 request: (req) =>
@@ -180,7 +180,7 @@ request: (req) =>
 
 A few lines earn their wages here. The grant branch at the bottom is the folder thesis in code: when the judge named a folder, the "project" answer appends it to `approvedFolders`; when it didn't — auto mode off, or a prompt with no folder in play — the answer falls back to granting the command's *rule*, the tier-1 mechanism we'll dissect next. Both ledgers are plain string arrays in the project's settings file:
 
-```ts title="packages/core/src/entities/Settings.ts"
+```ts title="packages/sdk-core/src/entities/Settings.ts"
 autoApprove: Schema.optional(Schema.Boolean),
 // unset → on; false → every unmatched command prompts
 approvedBashRules: Schema.optional(Schema.Array(Schema.String)),
@@ -197,7 +197,7 @@ One more structural choice that's easy to miss: the session ledgers (`sessionRul
 
 Underneath the judge sits the zero-cost tier, and its entire intelligence is in choosing *which string to remember*. When the modal grants a command rather than a folder, what persists is a **rule key** derived from the command — and granularity is the whole game. Too coarse, and one click recreates unrestricted shell. Too fine, and every changed test path re-prompts, which recreates the rubber stamp the gate exists to avoid.
 
-```ts title="packages/core/src/ports/Approval.ts"
+```ts title="packages/sdk-core/src/ports/Approval.ts"
 /** Shell metacharacters that make a command's effect non-obvious from its head. */
 const SHELL_META = /[|&;<>$`(){}\[\]*?!\\\n]/
 
@@ -220,7 +220,7 @@ Where the judge is probabilistic and priced per call, this tier is a string look
 
 The fourth modal answer deserves its own section, because most gates get it wrong. In the common design a denial is a dead end: the tool call errors, the model apologizes, the turn limps or dies. [efferent](https://github.com/xandreeddev/efferent) treats a denial as *information addressed to the model*. The deny answer takes a free-text reason, and the whole thing returns as the bash tool's failure payload:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 const decision = yield* approval.request({
   tool: 'Bash',
   summary: command,
@@ -241,7 +241,7 @@ All of [efferent](https://github.com/xandreeddev/efferent)'s tools declare their
 
 Everything above assumes a human is present. In `--print` mode and CI there isn't one, and the honest version of an approval gate with nobody watching is a static flag. Headless runs keep the blunt instrument: bash is off unless the invocation passes `--allow-bash`, and when it's off the tool returns a failure saying so —
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 if (!allowBash) {
   return yield* Effect.fail({
     error: 'BashNotAllowed',
@@ -252,7 +252,7 @@ if (!allowBash) {
 
 — and when it's on, the `Approval` port is satisfied by a five-line allow-everything layer, because `--allow-bash` already *is* the human's standing decision, made once at invocation time:
 
-```ts title="packages/core/src/ports/Approval.ts"
+```ts title="packages/sdk-core/src/ports/Approval.ts"
 export const ApprovalAllowAllLive = Layer.succeed(
   Approval,
   Approval.of({

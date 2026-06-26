@@ -40,7 +40,7 @@ So the design goal, stated precisely: keep the single `LanguageModel` service (t
 
 Step one is making the selection itself a first-class thing. A **selection** is just a provider name plus the provider's own model id — that's all routing needs:
 
-```ts title="packages/core/src/entities/Model.ts"
+```ts title="packages/sdk-core/src/entities/Model.ts"
 export type Provider = 'google' | 'openai' | 'anthropic' | 'opencode' | 'ollama'
 
 export interface ModelSelection {
@@ -52,7 +52,7 @@ export interface ModelSelection {
 
 [efferent](https://github.com/xandreeddev/efferent)'s core declares a `ModelRegistry` service around it:
 
-```ts title="packages/core/src/ports/ModelRegistry.ts"
+```ts title="packages/sdk-core/src/ports/ModelRegistry.ts"
 export class ModelRegistry extends Context.Tag('@efferent/core/ModelRegistry')<
   ModelRegistry,
   {
@@ -72,7 +72,7 @@ The implementation detail that makes everything downstream trivial: `current` is
 
 Now the centerpiece. The live layer for `LanguageModel` is still a layer — built once, like any other — but what it builds is a **router**: a service whose every method defers the provider decision to the moment it's called.
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 export const RouterLanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
@@ -131,7 +131,7 @@ Three things to read out of that, in order.
 
 The same late-binding move applies to secrets. `:login` runs an interactive flow — paste an API key, or complete a real OAuth authorization — and writes the result to `~/.efferent/auth.json`. The store's interface is small:
 
-```ts title="packages/core/src/ports/AuthStore.ts"
+```ts title="packages/sdk-core/src/ports/AuthStore.ts"
 export type Credential =
   | { readonly type: 'api_key'; readonly key: string }
   | {
@@ -165,7 +165,7 @@ The eval and CI environments swap this one layer for an env-var-backed store, be
 
 `resolveAndBuild` bottoms out in a single function whose entire job is: given a selection, a secret, a credential, and the current settings, construct the chosen provider's `@effect/ai` service — into the surrounding scope, for one call.
 
-```ts title="packages/adapters/src/llm/providers.ts"
+```ts title="packages/sdk-adapters/src/llm/providers.ts"
 export const makeProviderLanguageModel = (
   sel: ModelSelection,
   key: Redacted.Redacted | null,
@@ -205,7 +205,7 @@ The result rides back to the router along with one boolean (whether the Claude-s
 
 Between building the provider and invoking it, the router gets one last hook — and per-call routing means per-call shaping comes for free:
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 const shapeOptions = <O>(sel: ModelSelection, shouldPrepend: boolean, options: O): O => {
   let shaped: unknown = options
   if (shouldPrepend) shaped = prependClaudeCode(shaped) // the system block Claude subscriptions require
@@ -224,7 +224,7 @@ The sharpest example is Gemini. Its thinking models return a `thought_signature`
 
 So [efferent](https://github.com/xandreeddev/efferent)'s persisted message schema gives every content part a slot that core *never reads*:
 
-```ts title="packages/core/src/entities/Conversation.ts"
+```ts title="packages/sdk-core/src/entities/Conversation.ts"
 export const ReasoningPart = Schema.Struct({
   type: Schema.Literal('reasoning'),
   text: Schema.String,
@@ -258,7 +258,7 @@ Moving resolution from startup to request time moves *failure* there too, and th
 
 The failure that actually happens is the credential one: `resolveKey` fails when an OAuth refresh dies — token revoked, subscription lapsed, refresh token consumed by another machine. The router refuses to soften it:
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 const key = yield* authStore.resolveKey(sel.provider).pipe(
   Effect.mapError((e) =>
     new AiError.UnknownError({
@@ -278,34 +278,34 @@ Here's the part that wasn't in the first version of this design. A real agent ma
 
 The answer is a tiny vocabulary of **roles** — and roles are the thesis again, applied at a second level:
 
-```ts title="packages/core/src/entities/Model.ts"
-export type ModelRole = 'main' | 'fast' | 'cheap'
+```ts title="packages/sdk-core/src/entities/Model.ts"
+export type ModelRole = 'general' | 'code' | 'fast'
 
-/** fast → main; cheap → legacy utilityModel → main. The single place the chain lives. */
+/** code/fast → general when unset. The single place the chain lives. */
 export const modelForRole = (settings: RoleModelSettings, role: ModelRole): string => {
   switch (role) {
-    case 'main':
+    case 'general':
       return settings.model
+    case 'code':
+      return settings.codeModel ?? settings.model // [!code highlight]
     case 'fast':
-      return settings.fastModel ?? settings.model // [!code highlight]
-    case 'cheap':
-      return settings.cheapModel ?? settings.utilityModel ?? settings.model
+      return settings.fastModel ?? settings.model
   }
 }
 ```
 
-The semantics, in one breath each. **main** does all agentic work — the root conversation *and* every spawned sub-agent, because delegation changes the context, not the brain. **fast** does latency-sensitive helper calls inside a running turn — the compression digests and the approval judgments (each a post of its own) — quick verdicts where a round-trip on main would visibly drag the run. **cheap** does background work that's never urgent — session titles, today. The highlighted fallback is the zero-config story: an unset role follows main, so the capability exists before anyone configures it.
+The semantics, in one breath each. **general** is the default agentic tier — the root conversation *and* the research, analysis, and planning sub-agents, because delegation changes the context, not the brain. **code** is the same agentic work narrowed to one job: sub-agents that *write* code, so you can put a coding-tuned model behind the edits while reasoning stays on `general` — a routing decision earned from evals that's a post of its own. **fast** does the latency-sensitive and background helper calls — the compression digests, the approval judgments, the session titles (each a post of its own) — quick jobs where a round-trip on the agentic tier would visibly drag the run or just burn frontier price on nothing. The highlighted fallback is the zero-config story: an unset role follows `general`, so the capability exists before anyone configures it.
 
 One-shot helper calls reach their tier through a deliberately tiny doorway — `UtilityLlm.complete(prompt, { role })`, a prompt in, a completion out — and its live implementation is the router's logic replayed almost line for line:
 
-```ts title="packages/adapters/src/llm/utilityLlm.ts"
-const complete = (prompt: string, options?: { role?: 'fast' | 'cheap' }) =>
+```ts title="packages/sdk-adapters/src/llm/utilityLlm.ts"
+const complete = (prompt: string, options?: { role?: 'fast' }) =>
   Effect.gen(function* () {
-    const role = options?.role ?? 'cheap'
+    const role = options?.role ?? 'fast'
     const settings = yield* settingsStore.get()
     const sel = roleIsConfigured(settings, role)
       ? selectionFromString(modelForRole(settings, role)) // [!code highlight]
-      : yield* registry.current // unset → follow the LIVE main selection
+      : yield* registry.current // unset → follow the LIVE general selection
     const cred = yield* auth.get(sel.provider)
     const key = yield* auth.resolveKey(sel.provider) // same lazy OAuth refresh
     const { svc } = yield* makeProviderLanguageModel(sel, key, cred, settings)
@@ -316,9 +316,9 @@ const complete = (prompt: string, options?: { role?: 'fast' | 'cheap' }) =>
 
 Settings read at call time, role resolved through the one fallback chain, credential resolved with the same refresh semantics, provider built into a one-call scope. Which means the helper tiers inherit the liveness contract for free: `:model fast` (the same live picker, scoped to a role) or a `:login` takes effect on the next helper call, no rebuild, exactly like the chat path. If provider choice had stayed a layer, each role would have needed its own slice of the layer graph and its own restart story. As state, a role is one string read.
 
-Roles also turn out to be the durable axis for *accounting*. Because every completion reports its usage, the TUI accumulates billed tokens per role — root and sub-agent spend lands on main, helper spend on its tier — and renders a running ledger in the activity pane: `Σ main 64k · cheap 160`. That line is the cheap-tier argument made empirical: thousands of helper tokens that cost effectively nothing because they went to a model priced for it. And it's stable vocabulary in a way model names can never be — you can swap every provider tomorrow and `fast` still means "the one that keeps turns snappy," in the settings keys, in the picker, and in the ledger.
+Roles also turn out to be the durable axis for *accounting*. Because every completion reports its usage, the TUI accumulates billed tokens per role — the root conversation and reasoning sub-agents land on `general`, code-writing sub-agents on `code`, helper calls on `fast` — and renders a running ledger in the activity pane: `Σ general 64k · code 12k · fast 1.2k`. That line is the fast-tier argument made empirical: thousands of helper tokens that cost effectively nothing because they went to a model priced for it. And it's stable vocabulary in a way model names can never be — you can swap every provider tomorrow and `fast` still means "the one that keeps turns snappy," in the settings keys, in the picker, and in the ledger.
 
-One small asymmetry worth noticing: the router stamps Anthropic cache breakpoints only on the main chat path. Helper calls are one-shot prompts that will never be reused, and Anthropic charges a premium to *write* cache entries — so the helper tiers deliberately skip the stamping. A per-call seam makes even that distinction one `if` instead of a configuration system.
+One small asymmetry worth noticing: the router stamps Anthropic cache breakpoints only on the agentic (`general`/`code`) chat path. Helper calls are one-shot prompts that will never be reused, and Anthropic charges a premium to *write* cache entries — so the `fast` tier deliberately skips the stamping. A per-call seam makes even that distinction one `if` instead of a configuration system.
 
 ## What layers are still for
 

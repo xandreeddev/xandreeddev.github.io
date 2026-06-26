@@ -44,17 +44,17 @@ The third currency is the tell. Ask "what happens when this call fails?" for eac
 
 [efferent](https://github.com/xandreeddev/efferent) is a long-running agent, which means it grows helper calls faster than most apps — anything that touches context, approvals, or session chrome is a candidate. The defense is one routing rule, stated in the repo's own words:
 
-> All *agentic* work — anything that drives the tool loop — runs on **main**, through the router `LanguageModel`. Everything else is a **one-shot helper call** and goes through `UtilityLlm.complete(prompt, { role })`, picking `fast` or `cheap`. Web search is the deliberate exception (a provider-server-side tool, not a chat completion). No other module may call a provider SDK.
+> All *agentic* work — anything that drives the tool loop — runs through the router `LanguageModel`, on the **general** tier by default or the **code** tier for sub-agents that write code. Everything else is a **one-shot helper call** and goes through `UtilityLlm.complete(prompt, { role: 'fast' })`. Web search is the deliberate exception (a provider-server-side tool, not a chat completion). No other module may call a provider SDK.
 
 Two doorways and one named exception. Because every call funnels through them, the census is short enough to fit in a table — and here is the complete in-app inventory, every row verified against the code:
 
 | call site | trigger | tier | on failure | spend lands in |
 | --- | --- | --- | --- | --- |
-| agent loop (root + every sub-agent) | every turn | **main** | the turn fails — the one site allowed to | context gauge + `byRole.main` |
+| agent loop (root + every sub-agent) | every turn | **general** / **code** | the turn fails — the one site allowed to | context gauge + `byRole.general` / `byRole.code` |
 | approval judge | a command with no matching approval rule | **fast** | degrade: show the human the modal | `byRole.fast` |
-| headroom digests | oversized tool result with a big dropped middle | **fast** | degrade: plain clip marker | `byRole.fast` |
-| handoff brief | `:handoff`, auto-fold, or a handoff-seeded spawn | **main** | error block on the rail; unfolded context stays | uncounted — known gap |
-| session title | a session's first exchange | **cheap** | nothing — the session stays untitled | `byRole.cheap` |
+| compaction digests | oversized tool result with a big dropped middle | **fast** | degrade: plain clip marker | `byRole.fast` |
+| handoff brief | `:handoff`, auto-fold, or a handoff-seeded spawn | **general** | error block on the rail; unfolded context stays | uncounted — known gap |
+| session title | a session's first exchange | **fast** | nothing — the session stays untitled | `byRole.fast` |
 | web search | the `search_web` tool | its own search model | a tool error the model reads | uncounted — known gap |
 
 (There's a seventh category — eval scoring and eval tasks run LLM calls too — but those run under a separate eval environment and their spend lands in the eval report, out of the app by design.)
@@ -63,13 +63,13 @@ Notice what the columns are. Not just *where* and *which model* — also *what h
 
 ### The loop is the easy part
 
-One `LanguageModel.generateText` per turn in `agentLoop.ts`, resolved through a router that re-reads the live model selection on every call. Sub-agents — spawned scopes working in parallel folders — run *the same loop on the same main tier*; the repo's phrasing is that **delegation changes the context, not the brain**, and a sub-agent doing real edits on a discount model would be a quality decision smuggled in as a cost optimization. The loop's internals are a post of its own; for the census all that matters is: one call site, main tier, and it's the only row whose failure is allowed to fail the turn — it *is* the turn.
+One `LanguageModel.generateText` per turn in `agentLoop.ts`, resolved through a router that re-reads the live model selection on every call. Sub-agents — spawned scopes working in parallel folders — run *the same loop*, on the **general** tier by default; the repo's phrasing is that **delegation changes the context, not the brain**. The one refinement: a sub-agent that *writes* code can be pinned to the **code** tier, so the brain is *specialized* — a coding-tuned model behind the edits — never *discounted*. Running real edits on a cheaper model would be a quality decision smuggled in as a cost optimization; the `code` tier exists precisely so that decision is explicit and configurable instead of implicit. The loop's internals are a post of its own; for the census all that matters is: one call site, the agentic tiers, and it's the only row whose failure is allowed to fail the turn — it *is* the turn.
 
 ### Call site: the approval judge
 
 When the agent wants to run a bash command that no existing approval rule covers, a classifier gets one question — does this command stay inside the folders the human already granted, doing ordinary development work? — and returns `allow` (skip the dialog) or `prompt` (show it). The judge's reasoning and the path-based grant model are a post of their own; what matters here is its shape *as a call site*:
 
-```ts title="packages/core/src/usecases/autoApproval.ts"
+```ts title="packages/sdk-core/src/usecases/autoApproval.ts"
 export const judgeApproval = (
   req: ApprovalRequest,
   permittedFolders: ReadonlyArray<string>,
@@ -84,11 +84,11 @@ export const judgeApproval = (
 
 Trigger: an unmatched command, mid-turn, with a human waiting — so it runs on the **fast** tier, because a round-trip on the main model would drag every approval. Failure policy: the highlighted line converts *every* error — missing key, rate limit, malformed JSON — into the verdict `prompt`, which is exactly the behavior the app had before the judge existed. The judge can remove dialogs, never add risk; an outage downgrades a convenience instead of breaking a turn. And spend: the verdict carries its `usage` up, and the caller books it under `fast` in the session ledger.
 
-### Call site: headroom digests
+### Call site: compaction digests
 
 [efferent](https://github.com/xandreeddev/efferent) compresses oversized tool results the moment they enter the message buffer — a 200k-character build log gets clipped to head + tail with a marker explaining how to retrieve the rest. (The mechanics of doing that without poisoning the provider's prompt cache are a post of their own.) The helper call: when the dropped middle is big enough to matter — at least 4,000 characters — a fast-tier model writes a ≤120-word digest of what was cut, woven into the marker so the main model knows what it isn't seeing:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 const utility = yield* Effect.serviceOption(UtilityLlm) // optional dependency: absence is a policy, not an error // [!code highlight]
 
 const summarize = (dropped: string): Effect.Effect<string | undefined> =>
@@ -106,19 +106,19 @@ Trigger: per loop step, only on oversized results. Tier: **fast**, declared at t
 
 ### Call site: the handoff brief
 
-When the context window fills past a threshold (or the user types `:handoff`), the conversation gets folded: an LLM summarizes the loaded view into a brief, a checkpoint is written, and future turns load only the brief plus what came after. Here's the row that proves tiering is a real decision and not a reflex: the summarizer runs on **main** — `generateHandoffBrief` calls `LanguageModel.generateText` directly, the only helper that does. Deliberately so: the brief *is* the continuity. Every fact it drops is gone from the agent's working memory, so this is the last place to save a fraction of a cent. A tier is a judgment about how much a call's quality matters, and this call's answer is "maximally."
+When the context window fills past a threshold (or the user types `:handoff`), the conversation gets folded: an LLM summarizes the loaded view into a brief, a checkpoint is written, and future turns load only the brief plus what came after. Here's the row that proves tiering is a real decision and not a reflex: the summarizer runs on **general** — `generateHandoffBrief` calls `LanguageModel.generateText` directly, the only helper that does. Deliberately so: the brief *is* the continuity. Every fact it drops is gone from the agent's working memory, so this is the last place to save a fraction of a cent. A tier is a judgment about how much a call's quality matters, and this call's answer is "maximally."
 
 Failure policy: a failed fold surfaces as an error block in the UI and the unfolded context stays loaded — annoying, never fatal. Spend: **uncounted**, and the map says so out loud. More on that below.
 
 ### Call site: session titles
 
-After a session's first exchange, a model names it for the session list. Trigger: once per session, entirely off the critical path. Tier: **cheap** — the role's only consumer so far, and the textbook case for it: nothing is waiting, nobody notices a slow title, and the prompt is two clipped messages. Failure policy is the most honest in the codebase: *nothing*. The whole thing runs as a daemon fiber after the turn already finished, wrapped in `Effect.ignore` — a missing credential or a provider hiccup means the session stays untitled, which is precisely what it was before the feature shipped. Spend: the title's reported usage is booked under `cheap` before the result is even used.
+After a session's first exchange, a model names it for the session list. Trigger: once per session, entirely off the critical path. Tier: **fast** — though this is the least latency-sensitive thing `fast` does: nothing is waiting, nobody notices a slow title, and the prompt is two clipped messages. (Titles once had a `cheap` tier of their own; folding it into `fast` left one helper tier instead of two — a simplification the census made easy to make safely.) Failure policy is the most honest in the codebase: *nothing*. The whole thing runs as a daemon fiber after the turn already finished, wrapped in `Effect.ignore` — a missing credential or a provider hiccup means the session stays untitled, which is precisely what it was before the feature shipped. Spend: the title's reported usage is booked under `fast` before the result is even used.
 
 ### Call site: web search — the exception that proves the rule
 
 The `search_web` tool is the one call site that bypasses both doorways, and the map explains why instead of hiding it. Grounded search — where the *provider* runs the web search server-side and the model answers from the results — isn't a chat completion you can route like the others: the request must carry only the provider's search tool, and only some providers offer one. So the adapter builds its own client per call, against its own configured selection — a `searchModel` setting, an environment override, or whichever logged-in provider supports grounding:
 
-```ts title="packages/adapters/src/llm/webSearch.ts"
+```ts title="packages/sdk-adapters/src/llm/webSearch.ts"
 // NOT the chat router: a dedicated, grounding-only generateText whose
 // request carries only the provider's server-side search tool.
 const res = yield* svc.generateText({
@@ -136,40 +136,40 @@ An exception you can point to, with a reason attached, is fine. The unacceptable
 
 Look back at the generic sketch from the accretion section. Its real disease isn't the helpers — it's that each one names a concrete model id at the call site. `'small-model-2'` appears twice; are those the same decision or two coincidences? When a better small model ships, the migration is a grep, and greps miss.
 
-The fix is a layer of indirection with names: **roles**. [efferent](https://github.com/xandreeddev/efferent) has three — `main`, `fast`, `cheap` — and they're defined by *job description*, not by model:
+The fix is a layer of indirection with names: **roles**. [efferent](https://github.com/xandreeddev/efferent) has three — `general`, `code`, `fast` — and they're defined by *job description*, not by model:
 
-- **main** — the brain: every turn of the agent loop, root and sub-agents alike, plus the one helper where quality is the whole point (the handoff brief).
-- **fast** — latency-sensitive helpers inside a running turn: the approval judge, the headroom digests. Quick verdicts where a round-trip on main would drag the run.
-- **cheap** — background work that's never urgent: session titles.
+- **general** — the default brain: every turn of the agent loop, root and reasoning sub-agents alike, plus the one helper where quality is the whole point (the handoff brief).
+- **code** — the same agentic loop, narrowed to sub-agents that *write* code, so a coding-tuned model can sit behind the edits while reasoning stays on `general`. Specialized, not discounted.
+- **fast** — the helper tier: latency-sensitive calls inside a running turn (the approval judge, the compaction digests) and the off-path background ones (session titles). Quick jobs where a round-trip on the agentic model would drag the run or just burn frontier price.
 
 Call sites declare a role; one pure function, in one file, resolves roles to models:
 
-```ts title="packages/core/src/entities/Model.ts"
-export type ModelRole = 'main' | 'fast' | 'cheap'
+```ts title="packages/sdk-core/src/entities/Model.ts"
+export type ModelRole = 'general' | 'code' | 'fast'
 
 /** The single place the fallback chain lives — router, utility tier,
  *  and settings UI all call this instead of re-deriving it. */
 export const modelForRole = (settings: RoleModelSettings, role: ModelRole): string => {
   switch (role) {
-    case 'main':
+    case 'general':
       return settings.model
+    case 'code':
+      return settings.codeModel ?? settings.model // [!code highlight]
     case 'fast':
-      return settings.fastModel ?? settings.model // [!code highlight]
-    case 'cheap':
-      return settings.cheapModel ?? settings.utilityModel ?? settings.model
+      return settings.fastModel ?? settings.model
   }
 }
 ```
 
-The fallback chain is half the design: an unconfigured role resolves to the current main selection, so every helper works with zero configuration — you opt *into* discount models per role, with one setting, when you're ready to make that quality bet. Changing the fast model is `:set fastModel …`, not a code change, not a grep, not a deploy.
+The fallback chain is half the design: an unconfigured role resolves to the current general selection, so every helper and every code spawn works with zero configuration — you opt *into* a specialized model per role, with one setting, when you're ready to make that bet. Changing the code model is `:set codeModel …`, not a code change, not a grep, not a deploy.
 
 The helper doorway itself is one deliberately tiny port — a prompt in, a completion out, the role as the only knob:
 
-```ts title="packages/core/src/ports/UtilityLlm.ts"
+```ts title="packages/sdk-core/src/ports/UtilityLlm.ts"
 export interface UtilityOptions {
-  /** `cheap` (default) — background work that's never urgent.
-   *  `fast` — latency-sensitive helper calls inside a running turn. */
-  readonly role?: 'fast' | 'cheap' // [!code highlight]
+  /** `fast` — every one-shot helper call: tool-output summaries,
+   *  approval judgments, session titles. Unset → the general model. */
+  readonly role?: 'fast' // [!code highlight]
 }
 
 export class UtilityLlm extends Context.Tag('@efferent/core/UtilityLlm')<
@@ -183,7 +183,7 @@ export class UtilityLlm extends Context.Tag('@efferent/core/UtilityLlm')<
 >() {}
 ```
 
-Note what the port *doesn't* offer: no tools, no streaming, no message history. A helper call that needs those isn't a helper call — it's agentic work trying to sneak out of the main tier, and the interface refuses to carry it. The return type matters too: `UtilityCompletion` is `{ text, usage? }` — usage comes back with every completion *so that each tier's spend is countable*. The live implementation resolves the role's selection per call, pulls the key from the auth store per call, and builds a provider client scoped to exactly that one request — so a mid-session `:set fastModel` or fresh login applies on the next helper call with no rebuild. (How a selection becomes a provider client is the routing story, a post of its own.)
+Note what the port *doesn't* offer: no tools, no streaming, no message history. A helper call that needs those isn't a helper call — it's agentic work trying to sneak out of the general/code tiers, and the interface refuses to carry it. The return type matters too: `UtilityCompletion` is `{ text, usage? }` — usage comes back with every completion *so that each tier's spend is countable*. The live implementation resolves the role's selection per call, pulls the key from the auth store per call, and builds a provider client scoped to exactly that one request — so a mid-session `:set fastModel` or fresh login applies on the next helper call with no rebuild. (How a selection becomes a provider client is the routing story, a post of its own.)
 
 The deeper benefit of role names isn't even the swappability — it's that they force the classification conversation. The repo's history has a commit retagging which jobs count as `fast` exactly because the roles made someone argue about it. "Which role does this new call get?" is a question a reviewer can ask in five seconds. "Which of our four hardcoded model ids should this new file copy?" is not.
 
@@ -201,15 +201,15 @@ Five helpers, five degrade paths, and every one lands on the same principle: **a
 
 The judge's version of this is compiler-checked: its error channel is `never`, meaning Effect's type system can prove every failure has been converted into the `prompt` verdict. Add an unhandled failure path in a refactor and the signature breaks at build time. The title's version is the other extreme — fired as a daemon after the turn already completed, with all outcomes ignored:
 
-```ts title="packages/cli/src/tui-solid/actions/submit.ts"
-// The session's first exchange just landed: name it on the cheap tier,
+```ts title="packages/code/src/cli/actions/submit.ts"
+// The session's first exchange just landed: name it on the fast tier,
 // off the critical path. A missing credential must never surface here.
 if (firstExchange) {
   yield* Effect.forkDaemon(
     Effect.gen(function* () {
       const history = yield* cs.list(cid)
       const res = yield* generateSessionTitle(history)
-      if (res.usage !== undefined) countCheapSpend(res.usage)
+      if (res.usage !== undefined) countFastSpend(res.usage)
       if (res.title.length === 0) return
       yield* cs.setTitle(cid, res.title)
     }).pipe(Effect.ignore), // [!code highlight]
@@ -223,10 +223,10 @@ if (firstExchange) {
 
 A census of call sites implies a census of spend, and the role vocabulary is what makes one possible. [efferent](https://github.com/xandreeddev/efferent)'s session ledger is keyed by role, not by model:
 
-```ts title="packages/cli/src/tui-solid/presentation/sidePane.ts"
+```ts title="packages/code/src/cli/presentation/sidePane.ts"
 export interface SessionStats {
   // …
-  /** Billed tokens per model role (main / fast / cheap). */
+  /** Billed tokens per model role (general / code / fast). */
   readonly byRole: RoleSpend // [!code highlight]
 }
 
@@ -241,7 +241,7 @@ export const accumulateRoleSpend = (
 })
 ```
 
-Every row of the census names its route into this ledger: root-loop and sub-agent usage accumulate under `main`; the judge and the title daemon book their own usage directly; the headroom digests report through a loop hook that sub-agents forward to their parent, so a digest three spawns deep still lands in the session's `fast` bucket. The UI renders the sum as a `Σ main/fast/cheap` line — keyed by role, because "the helpers cost a third of the bill" is an actionable sentence and a flat token total is not. (What the UI does with all this is a post of its own; the census only cares that every call site has a destination.)
+Every row of the census names its route into this ledger: root-loop and reasoning sub-agent usage accumulate under `general`, code-writing spawns under `code`; the judge and the title daemon book their own usage directly; the compaction digests report through a loop hook that sub-agents forward to their parent, so a digest three spawns deep still lands in the session's `fast` bucket. The UI renders the sum as a `Σ general/code/fast` line — keyed by role, because "the helpers cost a third of the bill" is an actionable sentence and a flat token total is not. (What the UI does with all this is a post of its own; the census only cares that every call site has a destination.)
 
 And two call sites *don't* have one. The handoff brief and web search bill real tokens that no ledger sees, and the map's accounting section names both, explains exactly what each fix needs — `WebSearch` returning usage alongside its answer, `generateHandoffBrief` reporting usage to its caller — and calls them the next slice. I'd argue the documented gap is the most load-bearing part of the whole document. An inventory that quietly omits two rows is worse than no inventory, because it teaches people to trust a wrong number. An inventory that says "these two are missing, here's why, here's the fix" is a to-do list with an audit trail.
 
@@ -267,7 +267,7 @@ Honesty section. Three real prices.
 
 **Tiering is indirection.** A reader of `judgeApproval` sees `role: 'fast'` and must hop to settings to learn which model that is today — one more level than a literal model id, and on day one, with a single call site, it's pure ceremony. The investment pays at call site three or four; if your app will only ever have one, you don't need roles, just the document.
 
-**Cheap models doing judgment is a quality bet, and you must eval it.** Moving the judge to the fast tier asserts that a small model can classify command safety reliably. That's testable, and it had better be tested — [efferent](https://github.com/xandreeddev/efferent) runs eval suites for exactly such behaviors, and the judge is additionally designed so its worst failure is a spurious dialog rather than a wrong approval. The design lesson generalizes: helpers whose *errors are cheap* (an unnecessary prompt, a missing digest) are good tier-down candidates; helpers whose errors compound silently — like the handoff brief, where a dropped fact is unrecoverable — are not, which is why that row stays on main. If you tier down a call site without an eval and without bounding its failure, you've replaced an unaudited cost with an unaudited quality regression, which is strictly worse because nobody's dashboard shows it.
+**Cheap models doing judgment is a quality bet, and you must eval it.** Moving the judge to the fast tier asserts that a small model can classify command safety reliably. That's testable, and it had better be tested — [efferent](https://github.com/xandreeddev/efferent) runs eval suites for exactly such behaviors, and the judge is additionally designed so its worst failure is a spurious dialog rather than a wrong approval. The design lesson generalizes: helpers whose *errors are cheap* (an unnecessary prompt, a missing digest) are good tier-down candidates; helpers whose errors compound silently — like the handoff brief, where a dropped fact is unrecoverable — are not, which is why that row stays on general. If you tier down a call site without an eval and without bounding its failure, you've replaced an unaudited cost with an unaudited quality regression, which is strictly worse because nobody's dashboard shows it.
 
 **The map goes stale.** It's prose; the compiler won't defend it. Without the review rule it drifts within a month, and a stale inventory is actively misleading. The mitigations are structural — few doorways so there's little to forget, a greppable invariant for CI, the same-PR rule — but the honest answer is that the map is a discipline, not a mechanism, and disciplines need someone who cares.
 

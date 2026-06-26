@@ -19,7 +19,7 @@ TypeScript is **structurally typed**: two types with the same shape are the same
 
 A **branded type** is a structural type with a phantom tag welded on — a property that exists only in the type system, never at runtime:
 
-```ts title="packages/core/src/entities/AgentContext.ts"
+```ts title="packages/sdk-core/src/entities/AgentContext.ts"
 export const ContextNodeId = Schema.UUID.pipe(Schema.brand("ContextNodeId"))
 export type ContextNodeId = typeof ContextNodeId.Type
 ```
@@ -46,7 +46,7 @@ That's the whole pitch, and it's the FP slogan you've heard — *make illegal st
 
 Which brings us back to the reclaim. `ContextNodeId` was already a brand — so why was there a bug to fix? Because a brand leaks through the *widest* type any value passes through on its way to a caller. The id was branded at the mint, but the function that resumed a node annotated its return as `string`:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 readonly resumeNode: (/* … */) => Effect.Effect<
   { summary: string; filesChanged: ReadonlyArray<string>; nodeId: string },       // [!code --]
   { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId }, // [!code ++]
@@ -57,14 +57,14 @@ readonly resumeNode: (/* … */) => Effect.Effect<
 
 The runtime value was a real `ContextNodeId` the whole time — the annotation just *described* it as `string`, and an annotation that's wider than its value is a one-way valve: every downstream consumer inherits the wider type and the brand is gone, silently, with no cast to grep for and no error to notice. The same widening had crept into the hook events that narrate a run…
 
-```ts title="packages/core/src/entities/AgentHooks.ts"
+```ts title="packages/sdk-core/src/entities/AgentHooks.ts"
 readonly subAgentNodeId?: string         // [!code --]
 readonly subAgentNodeId?: ContextNodeId  // [!code ++]
 ```
 
 …and into the not-found errors, whose `id` field had always *carried* a branded value from its constructor but *declared* a `string`:
 
-```ts title="packages/core/src/ports/ContextTreeStore.ts"
+```ts title="packages/sdk-core/src/ports/ContextTreeStore.ts"
 export class ContextNodeNotFound extends Data.TaggedError("ContextNodeNotFound")<{
   readonly id: string         // [!code --]
   readonly id: ContextNodeId  // [!code ++]
@@ -106,7 +106,7 @@ And the other half of the rubric — when to *skip*. Leave it a bare `string` wh
 
 The most instructive line in the whole reclaim is one I deliberately *didn't* change. The cross-mode event stream — what gets serialized to JSONL when the agent runs headless — keeps its node id as a plain `string`:
 
-```ts title="packages/cli/src/events.ts"
+```ts title="packages/sdk-core/src/entities/AgentEvent.ts"
 /** …a core ContextNodeId deliberately widened to string — AgentEvent is the
  *  cross-mode WIRE vocabulary (serialized to JSONL in json mode), so the
  *  brand stays in the domain and the transport stays a plain string. */

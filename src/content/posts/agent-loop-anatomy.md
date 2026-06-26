@@ -43,7 +43,7 @@ The first decision is where to stop writing code. [efferent](https://github.com/
 
 What it deliberately does not do is iterate. Calling `generateText` again with the grown history — the loop — is left to you, and the doc comment at the top of [efferent](https://github.com/xandreeddev/efferent)'s loop file treats that as a feature, not a gap. Here's the skeleton:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 export const runAgentLoop = (input: RunAgentLoopInput) =>
   Effect.gen(function* () {
     const maxSteps = input.maxSteps ?? 20
@@ -91,7 +91,7 @@ A thing worth saying plainly, because the "conversation" framing obscures it: ch
 
 The mapping step exists because [efferent](https://github.com/xandreeddev/efferent) persists its own `AgentMessage` shape rather than any provider's wire format. `toPromptMessages` translates one into the other:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 export const toPromptMessages = (messages: ReadonlyArray<AgentMessage>) =>
   messages.map((m) => {
     if (m.role === 'user') return { role: 'user', content: m.content }
@@ -125,7 +125,7 @@ The naive sketch had one exit and gave it to the model. The real loop has four, 
 
 **Exit 1 — the model is done.** The natural ending, but stated more defensively than the sketch:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const wantsMore = res.finishReason === 'tool-calls' && toolCalls.length > 0 // [!code highlight]
 if (!wantsMore) {
   stillWantedMore = false
@@ -138,7 +138,7 @@ Both conjuncts, deliberately: a provider can report `'tool-calls'` while deliver
 
 **Exit 2 — the step cap.** `while (turnIndex < maxSteps)` — 20 by default for the top-level agent, 80 for sub-agents, which have one job and a budget rather than a human watching. The cap is a backstop against a model that never stops asking, and the interesting part isn't the number, it's the *bookkeeping*: a capped run is not a finished run, and conflating the two produces a nasty failure mode. The last assistant text of a capped run is mid-thought narration — "now I'll update the second call site" — and any caller that surfaces it as the answer is presenting an abandoned thought as a deliverable. So the loop marks it:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 // Exhausted the step cap while the model still asked for tools → the last
 // text is mid-thought, not a final answer. Tell the caller.
 const stoppedAtMaxSteps = turnIndex >= maxSteps && stillWantedMore
@@ -154,7 +154,7 @@ That's why `stillWantedMore` exists at all — at the top of the loop the two ex
 
 **Exit 3 — the driver's veto.** After every completed turn where the model *does* want more, the loop offers its caller a vote:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 if (hooks?.onShouldStopAfterTurn) {
   const stop = yield* hooks.onShouldStopAfterTurn({
     turnIndex,
@@ -166,7 +166,7 @@ if (hooks?.onShouldStopAfterTurn) {
 
 The placement is the entire design. This hook fires at a turn *boundary* — after `generateText` has resolved the step, after the tail (tool results included) is in the buffer — and never anywhere else. The invariant being protected is **pairing validity**: providers require every assistant tool-call to be followed by its matching tool-result, and an API call against a history that breaks the pairing is a 400, not a warning. Stop *between* turns and the buffer is always a legal conversation; stop *mid-step* and you'd strand an unanswered call. [efferent](https://github.com/xandreeddev/efferent)'s token budget rides exactly this hook — every sub-agent in a turn's fan-out drains one shared pool, and when it's spent:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 onShouldStopAfterTurn: () =>
   Effect.gen(function* () {
     const spent = yield* poolExhausted(pool) // shared across the whole sub-agent subtree // [!code highlight]
@@ -183,7 +183,7 @@ The running sub-agent halts at its next boundary, the flag routes to the same `[
 
 Grep `agentLoop.ts` for imports and you'll find no terminal UI, no database, no budget, no event queue. The loop's entire relationship with the outside world is one optional interface:
 
-```ts title="packages/core/src/entities/AgentHooks.ts"
+```ts title="packages/sdk-core/src/entities/AgentHooks.ts"
 export interface AgentHooks<R = never> {
   /** Reshape history before each turn's prompt assembly. */
   readonly onTransformContext?: (
@@ -215,7 +215,7 @@ Now the smallest section, about the discipline I'd argue is the least obvious an
 
 So the loop refuses to let anyone do arithmetic. You saw `newTail` accumulating in the skeleton: every message the loop appends — model response tails *and* the synthetic correctives the next section introduces — is recorded in a second list, and that list is the contract. Here's the caller's side, the use case that wraps every interaction:
 
-```ts title="packages/core/src/usecases/runAgent.ts"
+```ts title="packages/sdk-core/src/usecases/runAgent.ts"
 export const runAgent = (config, conversationId, userPrompt, hooks) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -255,7 +255,7 @@ A production loop talks to a probabilistic text generator that sometimes produce
 
 **Shape one: right tool, wrong arguments.** [efferent](https://github.com/xandreeddev/efferent)'s tools declare `failureMode: 'return'`, so an ordinary handler failure — file not found, ambiguous edit — already comes back as a tool result the model reacts to. But `failureMode` only covers *handler* failures, and there's a failure zone before the handler: `@effect/ai` decodes the model's arguments against the tool's schema inside `Toolkit.handle`, and a call with a valid name but a wrong-shaped payload dies there as `AiError.MalformedOutput` — which would abort the whole turn. The fix is the wrapper you saw applied to the toolkit back in the skeleton:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const handle = (name: unknown, params: unknown) =>
   base.handle(name, params).pipe(
     Effect.catchAll((err) => {
@@ -276,7 +276,7 @@ The branch encodes attribution: whose bug is this? The model's malformed argumen
 
 **Shape two: a hallucinated tool name.** This one fails a layer earlier, and the wrapper never sees it. The toolkit's tool names form a literal union in the response schema, so a model inventing `read_files` fails *response decoding inside `generateText`* — before any handler is consulted. The loop catches that case around the call itself and synthesizes a corrective:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 if (outcome._tag === 'malformed') {
   consecutiveMalformed++
   if (consecutiveMalformed > MAX_MALFORMED) return yield* Effect.fail(outcome.err)

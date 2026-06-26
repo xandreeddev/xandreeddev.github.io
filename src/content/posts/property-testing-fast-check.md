@@ -25,7 +25,7 @@ Everything below is real code from [efferent](https://github.com/xandreeddev/eff
 
 The mapping itself is exactly as boring as you'd hope:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 const hasKeys = (o: unknown): o is Record<string, unknown> =>
   typeof o === 'object' && o !== null && Object.keys(o).length > 0
 
@@ -96,7 +96,7 @@ That's the entire theory. The practice question is: where do good arbitraries co
 
 [efferent](https://github.com/xandreeddev/efferent)'s message type isn't a TypeScript interface — it's an Effect `Schema`, a runtime value that describes a data shape and can derive things from that description: a decoder, an encoder, a JSON-Schema, a TypeScript type. This is what messages actually are:
 
-```ts title="packages/core/src/entities/Conversation.ts"
+```ts title="packages/sdk-core/src/entities/Conversation.ts"
 export const TextPart = Schema.Struct({
   type: Schema.Literal('text'),
   text: Schema.String,
@@ -127,7 +127,7 @@ export const AgentMessage = Schema.Union(UserMessage, AssistantMessage, ToolMess
 
 This schema already earns its keep in production — every conversation row decodes through it on load. The discovery that reshaped the test suite is that Effect can derive *one more thing* from it: a fast-check arbitrary. Effect ships fast-check as a re-export (`effect/FastCheck` is literally `export * from 'fast-check'` — no extra dependency, no version skew with the `Arbitrary` module), and `Arbitrary.make` turns any schema into a generator:
 
-```ts title="packages/core/src/entities/Conversation.test.ts"
+```ts title="packages/sdk-core/src/entities/Conversation.test.ts"
 import { Arbitrary, FastCheck as fc, Schema } from 'effect' // [!code highlight]
 import { AgentMessage } from './Conversation.js'
 
@@ -154,7 +154,7 @@ With generators free, the question becomes which invariants to state. Here are t
 
 ### Every message maps 1:1, and options presence is exact
 
-```ts title="packages/core/src/usecases/promptMapping.test.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.test.ts"
 const msgArrayArb = fc.array(Arbitrary.make(AgentMessage), { maxLength: 8 })
 
 it('is total and maps every message 1:1, preserving roles, parts, and options presence', () => {
@@ -190,7 +190,7 @@ A fair question: why is this a field-by-field correspondence check rather than a
 
 [efferent](https://github.com/xandreeddev/efferent) persists each turn's token usage *inside* the first assistant message's `providerOptions`, under an `'efferent'` key — so cost data survives in the conversation row with no schema migration. That's a write into the exact blob that must otherwise round-trip untouched, which makes its contract worth stating precisely:
 
-```ts title="packages/core/src/usecases/promptMapping.test.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.test.ts"
 const usageArb = fc.record({
   inputTokens: fc.nat(),
   outputTokens: fc.nat(),
@@ -235,9 +235,9 @@ That pair — careful write, exact read — is the entire persistence story for 
 
 ## Properties for compression plans
 
-The same commit property-tested a very different seam: **headroom**, the context-compression pass in [efferent](https://github.com/xandreeddev/efferent) — its name and core idea borrowed from the [chopratejas/headroom](https://github.com/chopratejas/headroom) library (a post of its own). When a tool result is oversized, a planner splits it into a head to keep, a middle to drop, and a tail to keep. Compression is the canonical place where example tests give false confidence — every example you write is text you chose, and text you chose has friendly lengths and friendly characters:
+The same commit property-tested a very different seam: **compaction**, the context-compression pass in [efferent](https://github.com/xandreeddev/efferent) — its core idea borrowed from the [chopratejas/headroom](https://github.com/chopratejas/headroom) library (efferent's pass was even called `headroom` once, since renamed; a post of its own). When a tool result is oversized, a planner splits it into a head to keep, a middle to drop, and a tail to keep. Compression is the canonical place where example tests give false confidence — every example you write is text you chose, and text you chose has friendly lengths and friendly characters:
 
-```ts title="packages/core/src/usecases/headroom.test.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.test.ts"
 it('planClip fires iff oversized; the split is lossless; head/tail sizes exact', () => {
   fc.assert(
     fc.property(
@@ -265,7 +265,7 @@ The highlighted line is a **lossless-split invariant**: head, dropped middle, an
 
 One level up, the structural planners get a different generator strategy worth naming: **constructed corpora**. Fully random text almost never looks like grep output, so a totality property over `fc.string()` proves "never throws" but exercises nothing interesting. The fix is an arbitrary that *builds* realistic input from random parts, so the property can assert real arithmetic:
 
-```ts title="packages/core/src/usecases/headroomContent.test.ts"
+```ts title="packages/sdk-core/src/usecases/compactionContent.test.ts"
 const matchArb = fc.record({
   file: fc.stringMatching(/^[a-z]{1,8}$/).map((w) => `src/${w}.ts`),
   lineNo: fc.integer({ min: 1, max: 9999 }),
@@ -298,7 +298,7 @@ The compressor tells the model "412 of 3,000 matched lines omitted (61 files, 12
 
 The pattern generalizing across these examples: property tests dominate wherever the code is **algebraic** — where its correctness is a law relating inputs and outputs, independent of what any particular input *means*. Mappings (1:1, presence-exact), codecs (decode ∘ encode = identity), compression plans (lossless split, honest arithmetic), parsers (total on garbage, exact on constructed input). The cleanest specimens in the codebase are two one-line laws about model-string parsing:
 
-```ts title="packages/core/src/entities/Model.test.ts"
+```ts title="packages/sdk-core/src/entities/Model.test.ts"
 it('parse∘format is the identity for any provider and any model id', () => {
   fc.assert(
     fc.property(Arbitrary.make(Provider), fc.string(), (provider, modelId) => {
@@ -330,7 +330,7 @@ Property tests are not free confidence, and the failure modes are worth knowing 
 
 **Underconstrained generators produce flaky-looking failures.** Run 312 fails, run 313 passes, and your CI looks haunted — when actually the generator's domain is wider than the function's, and run 312 happened to sample the gap. fast-check prints the seed and shrunken counterexample, so it's deterministic once caught, but the *judgment call* is yours: is the input the generator found one the function must handle, or one that can't occur? [efferent](https://github.com/xandreeddev/efferent)'s suite hit exactly this on `extractUsage`'s totality property, and the resolution is in the repo, comment and all:
 
-```ts title="packages/core/src/usecases/promptMapping.test.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.test.ts"
 // Content elements are filtered non-nullish: the helpers read `p.type` on
 // each element, which throws on null/undefined — real @effect/ai response
 // content never contains nullish elements, so the generator excludes them
@@ -343,7 +343,7 @@ const contentArb = fc.array(
 
 The generator found that a `null` inside the content array throws. True — and irrelevant, because the upstream library never produces one. The wrong responses are to "fix" the function with a defensive check it doesn't need, or to silently shrink the generator and move on. The right response is what's there: constrain the generator *and write down why*, so the constraint is a reviewable claim about the input domain instead of a buried fudge. Every `.filter` on an arbitrary is an assertion about the world; undocumented, it's a place for bugs to hide.
 
-**Time budgets are real.** Each property here runs 100–300 times; a file with eight properties is a couple thousand function executions per test run. For pure functions that's milliseconds and nobody cares. The trap is property-testing through anything slow — real IO, real crypto rounds, a real database — where 300 runs quietly turns the fast suite into the slow one. Properties belong on the pure core; in an Effect codebase the layer system already pushed IO behind service interfaces, so the pure core is most of `packages/core` — which is not a coincidence so much as compound interest on the architecture.
+**Time budgets are real.** Each property here runs 100–300 times; a file with eight properties is a couple thousand function executions per test run. For pure functions that's milliseconds and nobody cares. The trap is property-testing through anything slow — real IO, real crypto rounds, a real database — where 300 runs quietly turns the fast suite into the slow one. Properties belong on the pure core; in an Effect codebase the layer system already pushed IO behind service interfaces, so the pure core is most of `packages/sdk-core` — which is not a coincidence so much as compound interest on the architecture.
 
 **The invariant discipline is the actual price.** The standing temptation in every property test is to compute the expected output the same way the function does — at which point you've written `expect(f(x)).toEqual(f(x))`, an expensive tautology. Real invariants come from asking what must be true *without* re-deriving the answer: lengths match, nothing invented, nothing lost, applying twice equals applying once, the counts in the summary add up to the input's ground truth. Sometimes honesty costs a constant: the search-compression budget property allows a stated slack, because the planner deliberately admits the first file block even when it overflows the budget — and the test says so in a comment instead of pretending the bound is tight. A property test is a small formal spec, and writing a spec that isn't the implementation in disguise is a skill. The first week, it's slower than examples. Then the schema-derived generators delete the factory-maintenance work, the specs start catching real edges before the model does, and the trade goes permanently positive.
 

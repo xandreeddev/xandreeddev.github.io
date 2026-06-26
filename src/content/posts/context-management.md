@@ -36,7 +36,7 @@ A *skill* is a reusable procedure written as a markdown file — "how we do data
 
 So only the index is admitted. At startup, skills are discovered by walking `cwd → parent directories → ~/.efferent/skills/` (closer files shadow farther ones on name collisions), and the prompt gets one line per skill:
 
-```ts title="packages/core/src/prompts/coder.ts"
+```ts title="packages/code/src/prompts/coder.ts"
 const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   if (skills.length === 0) return ''
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n') // [!code highlight]
@@ -58,7 +58,7 @@ The bodies stay on disk. The toolkit gains one tool, `read_skill({ name })`, tha
 
 The second admitted artifact is workspace guidance — the `AGENT.md` convention, where a repo carries durable instructions for any agent working in it ("run `bun test`, not `npm test`; never touch `generated/`"). These *do* earn permanent seats: they're rules, and a rule the model can't see is a rule it will break. But the discovery is hierarchical and the budget is explicit:
 
-```ts title="packages/core/src/usecases/discoverInstructionFiles.ts"
+```ts title="packages/code/src/usecases/discoverInstructionFiles.ts"
 /** Per-file char cap in the rendered prompt. */
 export const MAX_INSTRUCTION_FILE_CHARS = 4_000
 /** Total char budget for the whole '# Instructions' section. */
@@ -86,7 +86,7 @@ The walk collects `AGENT.md` and `AGENT.local.md` from the filesystem root down 
 
 The third instance is the quietest. A folder can carry a `SCOPE.md` whose body is ambient context for that folder — the local conventions of one package. It's admitted into a prompt only when an agent is actually *scoped there* (sub-agents in [efferent](https://github.com/xandreeddev/efferent) run confined to a folder; a root `SCOPE.md` seeds the main prompt the same way):
 
-```ts title="packages/core/src/usecases/discoverScopeTree.ts"
+```ts title="packages/sdk-core/src/usecases/discoverScopeTree.ts"
 /** Ambient folder context: the body of a folder's SCOPE.md, injected into
  *  any agent that runs scoped to that folder. */
 export const getScopePromptBody = (folder: string) =>
@@ -105,17 +105,17 @@ Note what these three mechanisms have in common, because it's the actual lesson:
 
 ## Compression at the edges
 
-Stage two guards the fast-growing part: tool results. The moment a result enters the message buffer — before the model, the store, or anything else sees it — any string over a budget (default 4,000 tokens, ~16,000 characters) is compressed *once, at append time*: structure-aware where the output has shape (grep output keeps every file with its first matches and exact counts; bash logs keep errors, tracebacks, and summary lines), a blind head-plus-tail clip where it doesn't, always ending in a marker that names what was dropped and how to get it back — `[…headroom: ~4509 tokens of this Bash output omitted. To retrieve it, re-run the tool narrower — read_file with offset/limit, a more specific grep…]`. The discipline that matters for *this* post is the "once, at append time" part: nothing already in the buffer is ever rewritten — the append-only invariant that keeps provider caches warm, which is a post of its own. Clipped on entry, immutable thereafter. The compression machinery itself — the structure detection, the reversible markers, the fast-model digests woven into them — is one stage of this lifecycle and a post of its own.
+Stage two guards the fast-growing part: tool results. The moment a result enters the message buffer — before the model, the store, or anything else sees it — any string over a budget (default 4,000 tokens, ~16,000 characters) is compressed *once, at append time*: structure-aware where the output has shape (grep output keeps every file with its first matches and exact counts; bash logs keep errors, tracebacks, and summary lines), a blind head-plus-tail clip where it doesn't, always ending in a marker that names what was dropped and how to get it back — `[…compaction: ~4509 tokens of this Bash output omitted. To retrieve it, re-run the tool narrower — read_file with offset/limit, a more specific grep…]`. The discipline that matters for *this* post is the "once, at append time" part: nothing already in the buffer is ever rewritten — the append-only invariant that keeps provider caches warm, which is a post of its own. Clipped on entry, immutable thereafter. The compression machinery itself — the structure detection, the reversible markers, the fast-model digests woven into them — is one stage of this lifecycle and a post of its own.
 
 ## Folding: the handoff
 
-Admission control bounds the prompt; edge compression bounds each result. Neither touches the real killer: the *accumulation*. Forty turns of perfectly reasonable, individually-clipped messages will still fill a window. Eventually you need to shrink history itself — and this is where most agent tooling reaches for the blunt instrument called "compaction": summarize the conversation, throw away the originals, hope the summary was good. The fold in [efferent](https://github.com/xandreeddev/efferent) — called a **handoff** — is built on a refusal to do the second part. Summaries are views. Originals are forever.
+Admission control bounds the prompt; edge compression bounds each result. Neither touches the real killer: the *accumulation*. Forty turns of perfectly reasonable, individually-clipped messages will still fill a window. Eventually you need to shrink history itself — and this is where most agent tooling reaches for a blunt instrument (often the literal `/compact` command): summarize the whole conversation, throw away the originals, hope the summary was good. The fold in [efferent](https://github.com/xandreeddev/efferent) — called a **handoff** — is built on a refusal to do the second part. Summaries are views. Originals are forever.
 
 The mechanism rests on one storage decision: the conversation store offers two read paths over the same immutable rows — `list`, the permanent record, and `listActive`, only the messages after the latest checkpoint. A **checkpoint** is a fold row that says *this summary stands in for everything up to position N*; it deletes nothing, it moves a boundary. That store and its append-only guarantee are the foundation post's subject (a post of its own); what matters here is what folding *does* with those two read paths — the loaded view narrows, the record doesn't.
 
 Creating a fold is the `:handoff` command, and the use case is short enough to read whole:
 
-```ts title="packages/core/src/usecases/handoff.ts"
+```ts title="packages/sdk-core/src/usecases/handoff.ts"
 export const createHandoff = (conversationId: ConversationId) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -142,7 +142,7 @@ And on the next turn, `runAgent` — back in the first section's snippet — loa
 
 Manual `:handoff` is for when you feel the session getting heavy. The system also watches for you. After each turn, the driver checks whether that turn's *reported* input size crossed a threshold of the window:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 export const DEFAULT_AUTO_HANDOFF_PCT = 85
 
 /** `true` when the context is full enough that the driver should fold now. */
@@ -166,7 +166,7 @@ The entry point is `:context`, which opens a viewer over the conversation — bu
 
 Then comes the verb. `Space` selects units — individual turns, or a whole handoff — and `b` (the `:build` command) creates a **new conversation seeded with exactly the selected units**, and switches to it:
 
-```ts title="packages/cli/src/tui-solid/presentation/contextView.ts"
+```ts title="packages/code/src/cli/presentation/contextView.ts"
 export const messagesForSelectedTurns = (
   segments: ReadonlyArray<ContextSegment>,
   selected: ReadonlySet<number>,        // turn indices
@@ -191,13 +191,13 @@ The seed preserves conversation order, and two invariants make it safe. First, *
 
 The original conversation is untouched — `:build` writes a brand-new one via `create` and `append` and leaves the source exactly as it was. So the move is really a *fork with intent*: "give me a fresh session that knows the architecture discussion from Tuesday, the summary of the refactor, and nothing about the four debugging detours." That's surgery you simply cannot express with an append-only chat and a compact button. It also reframes what a long messy session *is*: not a liability to be flushed, but raw material — the turns that mattered are sitting right there, selectable.
 
-One small grace note rides on the same store: each conversation gets a generated title after its first exchange (a one-shot call on the cheap helper tier — `generateSessionTitle`, persisted via `setTitle`), so the session list you're choosing from reads like commit subjects instead of raw first-prompt previews. Curation starts with being able to tell your contexts apart.
+One small grace note rides on the same store: each conversation gets a generated title after its first exchange (a one-shot call on the fast helper tier — `generateSessionTitle`, persisted via `setTitle`), so the session list you're choosing from reads like commit subjects instead of raw first-prompt previews. Curation starts with being able to tell your contexts apart.
 
 ## The accounting
 
 None of the above matters if the user can't see the resource being spent. The lifecycle's quietest component is its instrumentation, and the TUI treats context spend as a first-class number: the status bar reads like `gemini-3.5-pro · ▓▓░░ 12% 18k/1M · 86% cached · sqlite · ~/code/app` — current model, a context gauge with used-over-window, and the share of the last turn's input that was served from the provider's cache. The gauge's color follows one shared scale:
 
-```ts title="packages/cli/src/tui-solid/presentation/statusBar.ts"
+```ts title="packages/code/src/cli/presentation/statusBar.ts"
 export type GaugeSeverity = 'ok' | 'warn' | 'critical'
 
 export const gaugeSeverity = (used: number, total: number): GaugeSeverity => {
@@ -207,7 +207,7 @@ export const gaugeSeverity = (used: number, total: number): GaugeSeverity => {
 }
 ```
 
-Under 70%, bookkeeping. From 70%, the gauge turns warm — a fold is worth planning. From 90%, critical, with an explicit nudge to `:handoff` now — that's past the auto-fold threshold, so seeing it means auto-fold is off or an estimate is uncertain, and the human is the remaining line of defense. The same severity function drives every surface the number appears on, so the status bar and the activity dashboard can't disagree about how worried to be. Alongside it runs a per-role spend ledger — `Σ main 64k · fast 1.2k · cheap 160` — because the lifecycle itself costs tokens: handoff summaries, clip digests, and session titles all run on helper models, and spend that isn't counted is spend that quietly grows.
+Under 70%, bookkeeping. From 70%, the gauge turns warm — a fold is worth planning. From 90%, critical, with an explicit nudge to `:handoff` now — that's past the auto-fold threshold, so seeing it means auto-fold is off or an estimate is uncertain, and the human is the remaining line of defense. The same severity function drives every surface the number appears on, so the status bar and the activity dashboard can't disagree about how worried to be. Alongside it runs a per-role spend ledger — `Σ general 64k · code 12k · fast 1.2k` — because the lifecycle itself costs tokens: handoff summaries run on the agentic model, while clip digests and session titles run on the fast helper tier, and spend that isn't counted is spend that quietly grows.
 
 Here's why this section earns its place in a lifecycle post rather than a UI post: **visibility changes behavior, on both sides of the screen.** A user who watches the gauge climb folds at a natural boundary — after the tests pass, before the next work item — instead of having degradation diagnose itself three turns too late. A user who sees `86% cached` understands viscerally why history is immutable and why the fold happens at boundaries rather than continuously. And a user who sees one turn add twelve points to the gauge learns which of their own habits are expensive — "read the whole file" versus "read the function" — in a way no documentation teaches. Resource meters create resource discipline. Fuel gauges work; warning lights after the engine stops don't.
 

@@ -46,8 +46,8 @@ Here's what a project looks like when that's true. The root scripts of [efferent
 ```json title="package.json" {3}
 {
   "scripts": {
-    "dev": "bun --hot packages/cli/src/main.ts",
-    "start": "bun packages/cli/src/main.ts",
+    "dev": "bun --hot packages/code/src/main.ts",
+    "start": "bun packages/code/src/main.ts",
     "build": "bun run scripts/build.ts",
     "eval": "bun packages/evals/src/run.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -59,7 +59,7 @@ Read it for what's missing. `dev` and `start` point at the same file — the act
 
 The entrypoint itself is directly executable, because a shebang works on a `.ts` file when the interpreter understands TypeScript:
 
-```ts title="packages/cli/src/main.ts"
+```ts title="packages/code/src/main.ts"
 #!/usr/bin/env bun // [!code highlight]
 import { Args, Command, Options } from '@effect/cli'
 import { BunContext, BunRuntime } from '@effect/platform-bun'
@@ -70,7 +70,7 @@ And the development "binary" — the thing on `PATH` while hacking on the agent 
 
 ```bash
 #!/usr/bin/env bash
-exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/cli/src/main.ts" "$@"
+exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/code/src/main.ts" "$@"
 ```
 
 That's `bin/eff` in the repo, verbatim. Edit a file, run `eff`, and the behavior is the edit. There is no state of the world in which the program you observe and the program you wrote disagree — which sounds like a small guarantee until you remember how many tools exist to paper over its absence.
@@ -116,7 +116,7 @@ If you've run a multi-package TypeScript repo the traditional way, you know the 
 
 With no emit anywhere, a workspace package stops being a compilation unit and becomes *a name for a folder of source*. Here is the entire interface of [efferent](https://github.com/xandreeddev/efferent)'s core domain package:
 
-```json title="packages/core/package.json" {6,7}
+```json title="packages/sdk-core/package.json" {6,7}
 {
   "name": "@efferent/core",
   "private": true,
@@ -128,7 +128,7 @@ With no emit anywhere, a workspace package stops being a compilation unit and be
 }
 ```
 
-The `exports` field — the map that tells a resolver which file each import specifier means — points straight at TypeScript source. When `packages/cli` imports `@efferent/core`, Bun resolves through the workspace symlink in `node_modules`, lands on `src/index.ts`, and transpiles it on load like any other file. The type checker reaches the same files through `paths` mappings in `tsconfig.base.json` (`'@efferent/core': ['packages/core/src/index.ts']`) — the same fact, restated in the checker's dialect. And the root `tsconfig.json` checks everything as one flat program:
+The `exports` field — the map that tells a resolver which file each import specifier means — points straight at TypeScript source. When `packages/code` imports `@efferent/core`, Bun resolves through the workspace symlink in `node_modules`, lands on `src/index.ts`, and transpiles it on load like any other file. The type checker reaches the same files through `paths` mappings in `tsconfig.base.json` (`'@efferent/core': ['packages/sdk-core/src/index.ts']`) — the same fact, restated in the checker's dialect. And the root `tsconfig.json` checks everything as one flat program:
 
 ```json title="tsconfig.json"
 {
@@ -145,7 +145,7 @@ The dividend compounds with repo size. Every piece of per-package ceremony — `
 
 The model has to survive contact with npm, because users don't clone monorepos — they run `npm i -g efferent` and expect a binary. Distribution is the one legitimate job the bundler has left, and it's worth looking at exactly what the published artifact is, because it inverts the usual `package.json` logic:
 
-```json title="packages/cli/package.json" {12,13}
+```json title="packages/code/package.json" {12,13}
 {
   "name": "efferent",
   "bin": { "efferent": "dist/efferent.js", "eff": "dist/efferent.js" },
@@ -174,8 +174,8 @@ That file is produced by the only build script in the repository, which runs at 
 
 ```ts title="scripts/build.ts"
 const result = await Bun.build({
-  entrypoints: [join(root, 'packages/cli/src/main.ts')],
-  outdir: join(root, 'packages/cli/dist'),
+  entrypoints: [join(root, 'packages/code/src/main.ts')],
+  outdir: join(root, 'packages/code/dist'),
   naming: 'efferent.js',
   target: 'bun',
   external: ['@opentui/core'], // [!code highlight]

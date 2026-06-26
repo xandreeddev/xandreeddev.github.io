@@ -54,7 +54,7 @@ The economic framing is the part I want to sell hardest. A Brave or SerpAPI subs
 
 Here's how [efferent](https://github.com/xandreeddev/efferent) wraps that capability. In its architecture, every external capability is a *port* — an interface declared in the core package with no implementation attached — and web search is one of the smallest:
 
-```ts title="packages/core/src/ports/WebSearch.ts"
+```ts title="packages/sdk-core/src/ports/WebSearch.ts"
 export class WebSearchError extends Data.TaggedError('WebSearchError')<{
   readonly message: string
 }> {}
@@ -84,7 +84,7 @@ The doc comment on the real file calls the implementation **grounding-only**, an
 
 The adapter picks *which* provider to ground against with a fallback chain that ends at "whatever you're logged into":
 
-```ts title="packages/adapters/src/llm/webSearch.ts"
+```ts title="packages/sdk-adapters/src/llm/webSearch.ts"
 const resolveSearchModel = (auth, settings) =>
   Effect.gen(function* () {
     // 1. an explicit pin wins: `:set searchModel openai:gpt-4o`
@@ -104,7 +104,7 @@ const resolveSearchModel = (auth, settings) =>
 
 Note the defaults are fast, cheap models — a grounded search call doesn't need the frontier model you reserved for the actual coding; it needs something quick that can read search results and write a paragraph. And the chosen branch is short enough to show whole. Here's Google's:
 
-```ts title="packages/adapters/src/llm/webSearch.ts"
+```ts title="packages/sdk-adapters/src/llm/webSearch.ts"
 const client = yield* GoogleClient.make({ apiKey: key })
 const svc = yield* GoogleLanguageModel.make({ model: sel.modelId }).pipe(
   Effect.provideService(GoogleClient.GoogleClient, client),
@@ -124,7 +124,7 @@ If neither Google nor OpenAI is configured, `search` fails with a message tellin
 
 `web_fetch` is deliberately unglamorous, and its honesty is the feature. The capability underneath is another tiny port — `Http`, a single `get` — whose adapter is the runtime's `fetch` with two decisions baked in:
 
-```ts title="packages/adapters/src/http/fetch.ts"
+```ts title="packages/sdk-adapters/src/http/fetch.ts"
 export const HttpLive = Layer.succeed(Http, {
   get: (url, options) =>
     Effect.tryPromise({
@@ -150,7 +150,7 @@ Decision one: a non-2xx response is *returned*, not thrown — a 404 is informat
 
 The handler turns that raw body into something a model can read:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 web_fetch: ({ url, maxBytes }) =>
   Effect.gen(function* () {
     if (!/^https?:\/\//i.test(url)) {
@@ -170,7 +170,7 @@ web_fetch: ({ url, maxBytes }) =>
 
 And `htmlToText` — the part the scraping-stack reflex says needs a rendering engine — is this, in full:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 /** Reduce HTML to readable text — drop script/style/tags, decode common entities. */
 const htmlToText = (html: string): string =>
   html
@@ -192,7 +192,7 @@ The last line of the handler matters too: the readable text still passes through
 
 So the model has a discovery tool and a reading tool. The interesting part is that the *choreography* between them isn't enforced by code — it's taught by the tool descriptions, which are prompts wearing a schema:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const WebSearchTool = Tool.make('search_web', {
   description:
     'Search the web for current information and get a short synthesized answer ' +

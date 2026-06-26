@@ -46,13 +46,13 @@ The rest of this post is what it takes to make that one primitive actually hold.
 
 A single folder line only works because of an insight that's easy to state and easy to under-appreciate: **reads and writes are not symmetric, so they don't deserve symmetric rules.**
 
-Reading widely is how an agent builds understanding. Confine reads to the granted folder and you get worse code, not safer code: an agent working in `packages/adapters` needs the port interfaces in `packages/core`, the conventions in sibling packages, the lockfile at the root. Reads are also cheap to allow, because reading can't destroy anything — it can't break a build, lose an afternoon of work, or corrupt a repo. (Reads aren't *risk-free* — a read can surface secrets, which is why exfiltration controls belong on network egress, not on `read_file` — but the destructive blast radius of an agent lives entirely on the write side.)
+Reading widely is how an agent builds understanding. Confine reads to the granted folder and you get worse code, not safer code: an agent working in `packages/sdk-adapters` needs the port interfaces in `packages/sdk-core`, the conventions in sibling packages, the lockfile at the root. Reads are also cheap to allow, because reading can't destroy anything — it can't break a build, lose an afternoon of work, or corrupt a repo. (Reads aren't *risk-free* — a read can surface secrets, which is why exfiltration controls belong on network egress, not on `read_file` — but the destructive blast radius of an agent lives entirely on the write side.)
 
 Writes are where the damage is. A wrong write costs you work; a wrong `rm -rf` in the wrong working directory costs you a repository. So the rule is asymmetric on purpose: **reads range over everything; writes and bash are confined to the folder.**
 
 In [efferent](https://github.com/xandreeddev/efferent), that entire policy is one value — the `ScopeBinding`:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export interface ScopeBinding {
   /** Absolute path; writes + bash are confined here when `enforceWrite`. */
   readonly rootDir: string
@@ -75,7 +75,7 @@ Quick vocabulary, because the enforcement point matters. In a ports-and-adapters
 
 That seam is where the line is enforced. The model has no other route to the filesystem: every file operation it can express funnels through a handler, and the handlers close over a `ScopeBinding`. The check itself is two small functions:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 /**
  * True when `path` lives inside `rootDir` (or *is* `rootDir`). Uses
  * `path.sep` so `/foo/bar` isn't considered inside `/foo/bar-other`.
@@ -96,7 +96,7 @@ const rejectIfOutOfScope = (abs: string) =>
 
 And every mutating file tool runs it before touching the port:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 write_file: ({ path, content }) =>
   Effect.gen(function* () {
     const abs = resolvePath(displayRoot, path)
@@ -114,7 +114,7 @@ Why does the check live in the handler rather than the adapter? Because the bind
 
 And here's the part I'd put on a poster. The system prompt tells the model about the line too — but as a briefing, not a mechanism:
 
-```ts title="packages/core/src/prompts/coder.ts"
+```ts title="packages/sdk-core/src/prompts/scopeAgent.ts"
 `You can **only write inside your scope**. write_file or edit_file on a path
 outside ${args.rootDir} returns a structured '{ error: "OutOfScope", ... }'
 tool result. Treat that as a constraint, not a bug: if the work requires // [!code highlight]
@@ -125,14 +125,14 @@ Prompt rules are guidance: a model can forget them, misread them, or be argued o
 
 ## OutOfScope is feedback, not punishment
 
-Every tool in [efferent](https://github.com/xandreeddev/efferent)'s toolkit declares `failureMode: 'return'` — a failed tool call comes back to the model as a structured result, not an exception that kills the turn (the full failure-string philosophy is a post of its own). So an out-of-scope write isn't a crash; it's a message. Concretely, a sub-agent scoped to `packages/adapters` that tries to edit a core file gets:
+Every tool in [efferent](https://github.com/xandreeddev/efferent)'s toolkit declares `failureMode: 'return'` — a failed tool call comes back to the model as a structured result, not an exception that kills the turn (the full failure-string philosophy is a post of its own). So an out-of-scope write isn't a crash; it's a message. Concretely, a sub-agent scoped to `packages/sdk-adapters` that tries to edit a core file gets:
 
-> `write_file` → `{ error: 'OutOfScope', message: 'packages/core/src/ports/FileSystem.ts is outside this scope (packages/adapters). Defer it to the parent in your summary.' }`
+> `write_file` → `{ error: 'OutOfScope', message: 'packages/sdk-core/src/ports/FileSystem.ts is outside this scope (packages/sdk-adapters). Defer it to the parent in your summary.' }`
 
 Read that string as documentation, because it was written for a model to act on. It has three moving parts:
 
 1. **Where you tried to go** — the offending path, rendered workspace-relative so it matches every other path the model has seen this session.
-2. **Where the line is** — `outside this scope (packages/adapters)` restates the boundary in the moment it matters, which beats hoping the model retained it from the system prompt eighty turns ago.
+2. **Where the line is** — `outside this scope (packages/sdk-adapters)` restates the boundary in the moment it matters, which beats hoping the model retained it from the system prompt eighty turns ago.
 3. **What to do instead** — `Defer it to the parent in your summary.` Not "permission denied." A recovery protocol: finish what you *can* do, and report the out-of-scope work upward so the orchestrating agent can route it.
 
 The prompt closes the loop from its side — `An OutOfScope error means you must defer that part to the parent — keep going on what you can do.` In practice that's exactly what happens: the sub-agent finishes its in-scope edits and its one-line summary ends with something like "the port interface in core also needs a new method — deferred to you." The hard wall and the soft guidance are the same sentence said twice, once as enforcement and once as expectation. That redundancy is the design: rules the model has internalized produce *zero* failed calls on the happy path, and the wall is there for the day internalization fails.
@@ -141,7 +141,7 @@ The prompt closes the loop from its side — `An OutOfScope error means you must
 
 Files were the easy half. The `Bash` tool is where every folder sandbox has to either get honest or start lying, so here's the real handler:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 Bash: ({ command, timeout }) =>
   Effect.gen(function* () {
     if (!allowBash) {
@@ -169,7 +169,7 @@ Bash: ({ command, timeout }) =>
   }),
 ```
 
-The highlighted line is the folder doing its bash duty: every command executes with its **working directory set to the scope folder**. A sub-agent scoped to `packages/adapters` that runs `bun test` tests its own package; relative paths in every command land inside the line by default. For the overwhelming majority of what agents actually run — builds, tests, typechecks, git status — cwd-binding *is* the sandbox, because those commands are relative-path creatures.
+The highlighted line is the folder doing its bash duty: every command executes with its **working directory set to the scope folder**. A sub-agent scoped to `packages/sdk-adapters` that runs `bun test` tests its own package; relative paths in every command land inside the line by default. For the overwhelming majority of what agents actually run — builds, tests, typechecks, git status — cwd-binding *is* the sandbox, because those commands are relative-path creatures.
 
 Now the honest part: **cwd is a default, not a wall.** A shell can `cd /` as its first word. It can name absolute paths. It can invoke a script that does either. There is no path check that confines a Turing-complete command language short of interpreting it — which is the allow-list arms race from the top of this post — or jailing the process, which is the container. A folder sandbox that claims its bash is path-confined is lying to you.
 
@@ -189,7 +189,7 @@ Three layers, three different strengths, and no single one pretending to be the 
 
 The sandbox earns its keep when agents start spawning agents. [efferent](https://github.com/xandreeddev/efferent)'s delegation is one generic tool — `run_agent({ name, folder, task })` — whose own description tells the model the deal: the spawned agent "reads anywhere but writes/runs bash only inside that folder." Mechanically, a spawn is just a fresh binding:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 const binding: ScopeBinding = {
   rootDir: folder, // [!code highlight]
   displayRoot,
@@ -206,13 +206,13 @@ Same toolkit at every depth, same handlers, same prompts modulo the scope header
 
 The composition consequence is the good kind of boring: a parent that fans three sub-agents out into three *disjoint* folders gets non-colliding writes **by construction** — their write sets can't intersect, because each set is bounded by a folder the others can't touch (same-folder spawns serialize on a per-folder lock; the full spawn semantics — seeding, budgets, the persisted context tree — are a post of its own). And if a folder carries a `SCOPE.md`, its body rides along as ambient context for whoever runs there — discovery details likewise a post of its own.
 
-One inheritance detail that's easy to miss: `displayRoot` stays the workspace root all the way down. Every agent in the tree resolves and reports paths against the same anchor, so when a child's `OutOfScope` message says `packages/core/src/ports/FileSystem.ts`, the parent reading that summary knows exactly which file is meant — no per-scope coordinate systems to translate between.
+One inheritance detail that's easy to miss: `displayRoot` stays the workspace root all the way down. Every agent in the tree resolves and reports paths against the same anchor, so when a child's `OutOfScope` message says `packages/sdk-core/src/ports/FileSystem.ts`, the parent reading that summary knows exactly which file is meant — no per-scope coordinate systems to translate between.
 
 ## What the folder line doesn't give you
 
 Tradeoffs, plainly.
 
-**Folder granularity is coarse.** There are no per-file rules inside the line. You can't grant `packages/adapters` *except* `.env`, or make one file read-only. The bet is that finer-grained write rules are precisely the capability matrix this design refuses — and that secrets belong out of the tree, not defended by glob. If your threat model needs per-file write policy, this primitive alone won't carry it.
+**Folder granularity is coarse.** There are no per-file rules inside the line. You can't grant `packages/sdk-adapters` *except* `.env`, or make one file read-only. The bet is that finer-grained write rules are precisely the capability matrix this design refuses — and that secrets belong out of the tree, not defended by glob. If your threat model needs per-file write policy, this primitive alone won't carry it.
 
 **The check is lexical.** `isWithinScope` tests the path *string* — resolved and separator-guarded, as described above, but never `realpath`'d. A symlink inside the scope that points outside passes the check, and the OS follows it. Traversal via `..` is handled (resolution collapses it before the comparison); symlink indirection is not. That's the exact, honest extent of it.
 
@@ -228,7 +228,7 @@ If those bullets read like reasons to use a container — sometimes they are. Ho
 
 Permission systems get evaluated on expressiveness, which is the wrong axis. The capability matrix can express everything and predicts nothing; the user staring at a glob grid cannot answer "what did I just allow?" — so they allow everything, and the most expressive policy language in the world enforces nothing at all. **A permission model is only as strong as the user's ability to predict their own grants.**
 
-A directory is the rare boundary that every party in the system understands identically. The user thinks "this project." The model reads `Your scope: packages/adapters` and a failure string that names the line. The code runs a prefix check that is right or wrong with no middle. There's no translation layer where the user's intent and the enforced reality drift apart — and that translation layer is where every config-language sandbox quietly dies.
+A directory is the rare boundary that every party in the system understands identically. The user thinks "this project." The model reads `Your scope: packages/sdk-adapters` and a failure string that names the line. The code runs a prefix check that is right or wrong with no middle. There's no translation layer where the user's intent and the enforced reality drift apart — and that translation layer is where every config-language sandbox quietly dies.
 
 So my position, having shipped this: don't start from "what policies might someone want to express?" Start from the sentence already in your user's head, find the one primitive that sentence names, and enforce it where the model can't argue — in the handler, as data, with a failure string that teaches. Reads anywhere. Writes inside the line. Everything subtler than that is a layer you add with your eyes open, not a grid you make the user fill in.
 

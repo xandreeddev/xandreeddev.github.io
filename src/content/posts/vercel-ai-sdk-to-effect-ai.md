@@ -145,7 +145,7 @@ But double bookkeeping ran deeper than the cast. Because the message type was no
 
 `@effect/ai` is the Effect organization's own LLM package, and its design answer to all three exhibits is the same move: stop translating, and make the LLM layer *out of* the primitives the rest of the codebase already uses. Tools first. `Tool.make` declares a tool as four schemas and a policy:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const Bash = Tool.make('bash', {
   description: 'Execute a shell command in the workspace. …',
   parameters: {
@@ -178,7 +178,7 @@ Everything Exhibit A wanted and couldn't have is in this declaration. `parameter
 
 A `Tool.make` declaration has no implementation — deliberately. Handlers arrive separately, through the same mechanism every other dependency in an Effect codebase arrives: a `Layer` (a composable recipe for building services). The toolkit derives a handler layer; you implement each tool as an Effect:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const codingToolkitLayer = (cwd: string, skills: ReadonlyArray<Skill> = []) =>
   codingToolkit.toLayer(
     Effect.gen(function* () {
@@ -203,7 +203,7 @@ The highlighted line is the structural difference between the two worlds in mini
 
 The last piece: `@effect/ai` ships `LanguageModel` as a `Context.Tag` — a service interface with no implementation attached. This was the part I deleted my own code for with the least regret: the hand-rolled `Llm` port (81 lines, generic-`R` gymnastics and all) was my attempt at exactly this abstraction, and the library's version is better. The agent loop asks the *environment* for a model; which provider answers is a wiring decision made elsewhere. The heart of [efferent](https://github.com/xandreeddev/efferent)'s loop today:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 while (turnIndex < maxSteps) {
   const prompt = Prompt.make([
     { role: 'system', content: input.system },
@@ -251,7 +251,7 @@ Almost two thousand lines, barely any of it business logic — translation, type
 
 Just as telling is what *barely changed*. The CLI drivers — print, json, rpc, TUI — took diffs of about two dozen lines each, and they're all the same diff:
 
-```ts title="packages/cli/src/modes/print.ts"
+```ts title="packages/code/src/modes/print.ts"
 import { LanguageModel } from '@effect/ai' // [!code ++]
 // …the program's stated requirements:
   | FileSystem
@@ -273,7 +273,7 @@ Now the part I'd teach even to someone who never touches Effect. The migration's
 
 The migration commit's diff for the message schema file is empty. Here's why:
 
-```ts title="packages/core/src/entities/Conversation.ts"
+```ts title="packages/sdk-core/src/entities/Conversation.ts"
 /**
  * Content-part schemas, structurally mirroring Vercel AI SDK v6
  * `ModelMessage` parts so the adapter boundary is a near-identity cast. // [!code highlight]
@@ -297,7 +297,7 @@ Four days before the migration, `AgentMessage` had been shaped to structurally m
 
 The boundary work didn't disappear — it moved into `promptMapping.ts` and got smaller and more honest. Where the old adapter cast and hoped, the new mapping converts explicitly between `AgentMessage` and `@effect/ai`'s `Prompt`/`Response` types:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 /**
  * Bridges our persisted `AgentMessage` (Vercel-shaped) with `@effect/ai`'s
  * `Prompt`/`Response`. The opaque provider blob is carried verbatim both
@@ -320,7 +320,7 @@ Time for the honest column, because some things genuinely got worse — and the 
 
 **The framework's edges needed wrapping.** `@effect/ai` decodes a known tool's arguments before your handler runs, so a wrong-shaped call fails with `MalformedOutput` — which `failureMode: 'return'` never sees, because it only catches *handler* failures. Unhandled, that aborts the turn: the exact crash from Exhibit B, resurfaced one layer up. The fix is a wrapper around the toolkit's resolved handler that converts model-caused decode failures into tool results the model can correct. A *hallucinated tool name* fails earlier still — inside `generateText`, where the response's tool-call part won't decode against the toolkit's name union — so the loop catches that too and feeds back a corrective message:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 if (outcome._tag === 'malformed') {
   consecutiveMalformed++
   if (consecutiveMalformed > MAX_MALFORMED) return yield* Effect.fail(outcome.err) // [!code highlight]

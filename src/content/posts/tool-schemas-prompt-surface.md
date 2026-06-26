@@ -36,7 +36,7 @@ That asymmetry is the whole discipline. Everything below is one rule applied rep
 
 [efferent](https://github.com/xandreeddev/efferent) defines its tools with `@effect/ai`'s `Tool.make`, where the parameters, success shape, and failure shape are all Effect `Schema` values — runtime validators that carry static types. The detail that matters here: a `Schema` can carry **annotations**, free-form metadata attached to a type, and the `description` annotation flows straight through to the JSON Schema the provider receives. Here's the real `read_file`:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const ReadFile = Tool.make('read_file', {
   description:
     "Read a file's contents with line numbers. Use offset/limit to page through large files.",
@@ -89,7 +89,7 @@ Read that JSON the way the model does. It answers, in order: *what does this do 
 
 A tool description has two jobs, and most people only write the first: say what the tool does. The second job is **routing** — saying when to use it *and when to use its sibling instead* — because the model's real decision is rarely "can this tool do X" but "which of these twelve tools is right for X." [efferent](https://github.com/xandreeddev/efferent)'s file-writing pair makes the routing explicit, in the description itself:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const WriteFile = Tool.make('write_file', {
   description:
     "Create or fully replace a file. Use 'edit_file' instead for targeted in-place edits to existing files.", // [!code highlight]
@@ -119,7 +119,7 @@ The failure side mirrors it — every tool shares a `{ error, message }` struct 
 
 Sometimes a parameter annotation isn't describing a convention — it's describing a wall. `grep`'s `flags` argument gets spliced into a real shell command, which historically made it a command-injection hole; the fix was an allowlist that only admits bare flags. The annotation documents the wall so the model doesn't have to find it by collision:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 flags: Schema.optional(
   Schema.String.annotations({
     description:
@@ -137,7 +137,7 @@ Three moves in one annotation: examples of valid input (models pattern-match exa
 
 A tool's name looks like the one part of the schema with no semantics. It has two. The first is habit: a model has seen millions of transcripts of *some* tool names, and a name it recognizes comes with free training — [efferent](https://github.com/xandreeddev/efferent) names its search tools `grep`, `glob`, and `ls` precisely because the model already knows what those words mean down to the flag conventions. The second is collision, and it's nastier, because the collision space isn't your codebase — it's the provider's. This comment sits on the shell tool, and I'd frame it if I could:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 // NB: named "Bash" — the capital B is LOAD-BEARING, don't lowercase it.
 // Anthropic reserves the lowercase names "bash"/"web_search"/"computer"/
 // "code_execution"/"str_replace_*" for its built-in provider tools, and
@@ -162,7 +162,7 @@ None of this is visible in any type signature. It's pure namespace politics betw
 
 Everything so far treats the description as documentation. The most interesting tool in [efferent](https://github.com/xandreeddev/efferent) treats it as something stronger: **policy**. `run_agent` spawns a folder-scoped sub-agent with its own persisted context, and can also resume or branch a previous one — which means every call embeds a judgment call about context hygiene that models reliably get wrong on their own. The description is where that judgment got encoded:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 const RunAgentTool = Tool.make('run_agent', {
   description:
     'Spawn a sub-agent to do focused work scoped to a folder. It reads anywhere but ' +
@@ -197,7 +197,7 @@ Here's why I find this genuinely exciting: a tool description is **the cheapest 
 
 There's a structural fact about `@effect/ai` that turns all this from style advice into a hard interface: **parameters decode before the handler runs.** The doc comment in the agent loop states it precisely:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 /**
  * `@effect/ai` decodes a *known* tool call's parameters inside `Toolkit.handle`,
  * before our handler runs — so a wrong-shaped call (right name, bad args) fails // [!code highlight]
@@ -214,7 +214,7 @@ Sit with the implication, because it cuts both ways. Enforcement means your docs
 
 Models arrive pre-trained on other people's harnesses. A model that has spent its training life calling Claude Code's `Edit` tool — which takes a flat `old_string`/`new_string` pair — will, with measurable frequency, emit that flat shape at *your* edit tool, whatever your schema says. [efferent](https://github.com/xandreeddev/efferent)'s `edit_file` canonically takes an `edits` array. The comment on the normalizer tells the story:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 /**
  * Accept either the canonical `edits: [{ oldText, newText }]` array or the
  * flat single-edit convenience form (top-level `oldText`/`newText`). Models

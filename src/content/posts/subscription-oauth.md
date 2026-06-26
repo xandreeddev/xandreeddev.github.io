@@ -21,7 +21,7 @@ Start with what actually has to be stored. An **API key** is the degenerate case
 
 That's the entire taxonomy, and [efferent](https://github.com/xandreeddev/efferent) writes it down as one union in the core port file:
 
-```ts title="packages/core/src/ports/AuthStore.ts"
+```ts title="packages/sdk-core/src/ports/AuthStore.ts"
 export type Credential =
   | { readonly type: 'api_key'; readonly key: string }
   | {
@@ -45,7 +45,7 @@ The highlighted field is where the engineering lives. `expires` turns a credenti
 
 A *port*, in the hexagonal sense, is an interface the core owns and adapters implement — the core describes what it needs, never how it's done. [efferent](https://github.com/xandreeddev/efferent)'s credential port is an Effect `Context.Tag` (a typed service identifier; the full Effect tour is a post of its own), and its surface is small:
 
-```ts title="packages/core/src/ports/AuthStore.ts"
+```ts title="packages/sdk-core/src/ports/AuthStore.ts"
 export class AuthStore extends Context.Tag('@efferent/core/AuthStore')<
   AuthStore,
   {
@@ -86,7 +86,7 @@ No env vars are read in the product — credentials never enter shell history or
 
 The function that writes this file is six lines, and both halves of its trick matter:
 
-```ts title="packages/adapters/src/auth/local.ts"
+```ts title="packages/sdk-adapters/src/auth/local.ts"
 const writeAuthFile = (data: AuthData): void => {
   mkdirSync(authDir(), { recursive: true })
   const p = authFilePath()
@@ -114,7 +114,7 @@ The flow both providers implement is OAuth's *authorization-code* grant. In plai
 
 The classic version of this assumes the app can authenticate itself with a *client secret*. A CLI can't — it ships to everyone's machine, so any "secret" inside it is public by definition. **PKCE** (Proof Key for Code Exchange) closes that gap: generate a random *verifier*, send only its SHA-256 hash (the *challenge*) with the authorize request, then present the verifier itself at the exchange. A stolen authorization code is useless to an attacker, because the verifier that unlocks it never left your machine.
 
-```ts title="packages/adapters/src/auth/oauth/anthropic.ts"
+```ts title="packages/sdk-adapters/src/auth/oauth/anthropic.ts"
 /** Generate a PKCE verifier + S256 challenge (Web Crypto). */
 export const generatePkce = (): Effect.Effect<Pkce> =>
   Effect.promise(async () => {
@@ -146,7 +146,7 @@ The protocol constants — client id, endpoints, scopes — match the public Cla
 
 Now the driver. `begin` hands back the authorize URL plus the callback coordinates; the driver starts a loopback HTTP server bound to `127.0.0.1`, opens the browser, and forks a waiter:
 
-```ts title="packages/cli/src/tui-solid/actions/login.ts"
+```ts title="packages/code/src/cli/actions/login.ts"
 const begun = yield* authFlow.begin(provider) // fresh PKCE + the authorize URL
 const server = startCallbackServer(begun.callbackPort, begun.callbackPath)
 yield* shell.exec({ command: browserCommand(begun.authorizeUrl), cwd, timeoutMs: 5_000 })
@@ -172,7 +172,7 @@ Both paths are guarded. The waiter rejects any callback whose `state` doesn't ec
 
 `finishOAuth` swaps the code for tokens and persists in one motion. The exchange itself is a plain POST running inside the adapter's `Effect.tryPromise` — the one place exceptions get to exist, captured at the boundary as a typed failure — with one quiet decision in how the expiry is stored:
 
-```ts title="packages/adapters/src/auth/oauth/anthropic.ts"
+```ts title="packages/sdk-adapters/src/auth/oauth/anthropic.ts"
 const data = JSON.parse(text) as {
   access_token: string
   refresh_token: string
@@ -195,7 +195,7 @@ So tokens are on disk with an expiry. Who refreshes them, and when? One school r
 
 Lazy has a sharp edge, though: requests are **concurrent**. A single agent turn can run four tool calls in parallel and fan out sub-agents, each resolving a key. If the token is near expiry, every one of them decides to refresh — and refresh tokens *rotate*: the exchange returns a new refresh token, and the old one may die. Two concurrent refreshes send the same soon-dead refresh token; both may even succeed, but whichever response is persisted *last* can carry the stale pair — and the user is silently logged out, with nothing to blame in the moment it happened. The fix is a *single-flight* gate — a one-permit semaphore, so at most one refresh is ever in flight — plus a re-check inside it:
 
-```ts title="packages/adapters/src/auth/local.ts"
+```ts title="packages/sdk-adapters/src/auth/local.ts"
 resolveKey: (p) =>
   Ref.get(ref).pipe(
     Effect.flatMap((d) => {
@@ -230,7 +230,7 @@ Then there's the failure surface. When a refresh genuinely dies — token revoke
 
 Here's the part that surprises people: a subscription credential doesn't just change the secret — it changes the *shape of the request*. An Anthropic API key travels in an `x-api-key` header. An Anthropic subscription token must not; it authenticates as OAuth, with different headers entirely:
 
-```ts title="packages/adapters/src/llm/providers.ts"
+```ts title="packages/sdk-adapters/src/llm/providers.ts"
 // Anthropic OAuth authenticates as a subscription: Bearer + Claude Code
 // beta flags, never `x-api-key`.
 const anthropicOAuthTransform =
@@ -252,7 +252,7 @@ When the stored credential is OAuth, the provider client is built with `apiKey: 
 
 And it goes one layer deeper than headers, into the prompt itself. The adapter's comment states the constraint flatly: *Anthropic rejects OAuth tokens unless the first system block is exactly this.*
 
-```ts title="packages/adapters/src/llm/providers.ts"
+```ts title="packages/sdk-adapters/src/llm/providers.ts"
 export const CLAUDE_CODE_SYSTEM =
   "You are Claude Code, Anthropic's official CLI for Claude."
 
@@ -272,7 +272,7 @@ OpenAI's subscription lane is more drastic still: ChatGPT-plan traffic doesn't g
 
 Now the payoff. Here is everything the router — the single `LanguageModel` the agent loop talks to — knows about credentials:
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 const resolveAndBuild = (sel: ModelSelection) =>
   Effect.gen(function* () {
     const cred = yield* authStore.get(sel.provider)

@@ -60,7 +60,7 @@ OpenAI is the low-ceremony end of the spectrum. Prompts past a modest size thres
 
 There's one knob worth turning anyway. OpenAI's cache is sharded across their fleet, and a request only hits cache entries on the machine it lands on. The `prompt_cache_key` parameter is a routing hint: requests carrying the same key get routed consistently, so they keep landing where their warm prefix lives. [efferent](https://github.com/xandreeddev/efferent) pins it when the router builds the OpenAI client:
 
-```ts title="packages/adapters/src/llm/providers.ts"
+```ts title="packages/sdk-adapters/src/llm/providers.ts"
 case 'openai':
   return OpenAiClient.make({ apiKey: key }).pipe(
     Effect.flatMap((client) =>
@@ -83,7 +83,7 @@ Gemini calls its version **implicit context caching**, and it's the same deal as
 
 [efferent](https://github.com/xandreeddev/efferent) normalizes every provider's usage report into one shape, and the Gemini cache figure comes from exactly that field:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 export interface TokenUsage {
   readonly inputTokens: number
   readonly outputTokens: number
@@ -113,7 +113,7 @@ You get at most **four breakpoints per request**, so placement is a real decisio
 
 ### One anchor, two moving markers
 
-```ts title="packages/adapters/src/llm/providers.ts"
+```ts title="packages/sdk-adapters/src/llm/providers.ts"
 export const withAnthropicCacheBreakpoints = (options: GenerateOptions): GenerateOptions => {
   const messages = Prompt.make(options.prompt).content
   if (messages.length === 0) return options
@@ -149,7 +149,7 @@ And the question that should be nagging you: the markers *move* every turn — d
 
 The second half of the function is about what it *doesn't* do:
 
-```ts title="packages/adapters/src/llm/providers.ts"
+```ts title="packages/sdk-adapters/src/llm/providers.ts"
 const stamped = messages.map((msg, i) => {
   if (!stampIdx.has(i)) return msg
   const anthropic = msg.options['anthropic'] ?? {}
@@ -163,7 +163,7 @@ return { ...options, prompt: Prompt.fromMessages(stamped) }
 
 Two courtesies, both load-bearing. Provider options are *merged*, not replaced — a message already carrying other Anthropic metadata keeps it. And a message that already has an explicit `cacheControl` is left untouched, which matters because `ephemeral` isn't the only tier: you can pass `ttl: '1h'` for an hour-long entry at a higher write premium, and a caller who deliberately opted a long-lived prefix into that tier should not have the router silently downgrade it to five minutes. The colocated test pins all of this — the stamp positions, the untouched middle, the merge, and explicit-marker precedence:
 
-```ts title="packages/adapters/src/llm/anthropicCache.test.ts"
+```ts title="packages/sdk-adapters/src/llm/anthropicCache.test.ts"
 it('stamps the last system message and the last two non-system messages', () => {
   const options = {
     prompt: Prompt.make([
@@ -198,7 +198,7 @@ history[3].content = summarize(history[3].content)
 history.push(compress(res.tail))
 ```
 
-**Clause two: compression happens at append time, or not at all.** [efferent](https://github.com/xandreeddev/efferent)'s context-headroom machinery — a post of its own — exists precisely under this constraint. When a tool result comes back oversized (an 80k-character `cat`, a grep flood), it's compressed *the moment it enters the buffer*: the persisted record and every future prompt carry the compressed form from byte one, and nothing already sent to a provider is ever rewritten. The marker left behind names what was dropped and how the model can get it back, so compression is reversible on demand — but reversal produces a *new* tool call appended at the tail, never a mutation of the old bytes. Compress the future, never the past.
+**Clause two: compression happens at append time, or not at all.** [efferent](https://github.com/xandreeddev/efferent)'s context-compaction machinery — a post of its own — exists precisely under this constraint. When a tool result comes back oversized (an 80k-character `cat`, a grep flood), it's compressed *the moment it enters the buffer*: the persisted record and every future prompt carry the compressed form from byte one, and nothing already sent to a provider is ever rewritten. The marker left behind names what was dropped and how the model can get it back, so compression is reversible on demand — but reversal produces a *new* tool call appended at the tail, never a mutation of the old bytes. Compress the future, never the past.
 
 **Clause three: when history must actually shrink, shrink it as one deliberate prefix rebuild.** Eventually a session outgrows its context window and no amount of tail-compression saves you; the loaded history has to fold into a summary. That's a prefix change — there's no avoiding the cold miss. The discipline is to take the hit *once, on purpose, at a turn boundary*: [efferent](https://github.com/xandreeddev/efferent)'s handoff writes a checkpoint (the original rows are kept, never modified — they feed the persistent context tree, a post of its own) and the next request goes out with a brand-new prefix — summary first, recent messages after. One cold request writes the new cache entries; every turn after that is warm again. The failure mode this clause forbids is *incremental* rewriting — trimming a little here, rewording a little there, each edit a fresh full-price re-read of everything downstream. Fold rarely, fold completely, and let the frontier rebuild.
 
@@ -208,7 +208,7 @@ None of these clauses live in the caching code. They live in the store, the loop
 
 A property this silent needs instrumentation, because both failure modes — never caching, and quietly breaking the prefix — produce zero errors. [efferent](https://github.com/xandreeddev/efferent)'s TUI keeps the answer permanently on screen: the status bar reads `model · gauge 12% 18k/1M · 86% cached · …`, where the cache figure is the share of the last turn's input served from the provider's cache. The computation is one line:
 
-```ts title="packages/cli/src/tui-solid/presentation/statusBar.ts"
+```ts title="packages/code/src/cli/presentation/statusBar.ts"
 /**
  * The share of the last turn's context served from the provider's
  * cache (`42` = 42%) — the caching story in one number.
@@ -219,7 +219,7 @@ export const cachePercent = (cacheRead: number, input: number): number | null =>
 
 …but feeding it honestly requires un-warping one provider's accounting. Anthropic's `input_tokens` *excludes* cache reads and writes — on a fully cached turn it reports only the cold tail, and a naive gauge would claim a 150k-token conversation is using 2% of its context window. The raw cache figures ride in provider metadata, and `extractUsage` folds them back in:
 
-```ts title="packages/core/src/usecases/promptMapping.ts"
+```ts title="packages/sdk-core/src/usecases/promptMapping.ts"
 // Anthropic's input_tokens EXCLUDES cache reads and writes. Without this
 // fold, the context gauge reads ~0 on a fully cached turn.
 const au = anthropicRawUsage(content)

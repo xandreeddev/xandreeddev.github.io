@@ -22,7 +22,7 @@ Error: EACCES: permission denied, open '/repo/packages/auth/login.ts'
 // audience: the model that made the call, reading it in two seconds
 {
   error: 'OutOfScope',
-  message: 'packages/auth/login.ts is outside this scope (packages/core).
+  message: 'packages/auth/login.ts is outside this scope (packages/sdk-core).
             Defer it to the parent in your summary.',
 }
 ```
@@ -37,7 +37,7 @@ First, the plumbing fact that makes any of this possible. An agent loop is a con
 
 `@effect/ai`, the LLM layer [efferent](https://github.com/xandreeddev/efferent) is built on, makes that a declared property of each tool. A tool ships a `failure` schema next to its `success` schema, and `failureMode: 'return'` means a handler failure becomes the tool's *result* — flagged as an error, but an ordinary message the loop appends and keeps going past:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 export const Failure = Schema.Struct({
   error: Schema.String,
   message: Schema.optional(Schema.String),
@@ -66,7 +66,7 @@ Six strings from production. None is decoration; each earns its tokens by saving
 
 The most common model-caused failure: right tool, wrong argument shape. In `@effect/ai`, a known tool's parameters are decoded against its schema *before* the handler runs — so `failureMode: 'return'`, which only catches handler failures, never sees a decode miss. Left alone, it surfaces as a `MalformedOutput` error that aborts the entire turn over a malformed JSON object. [efferent](https://github.com/xandreeddev/efferent) wraps the toolkit's resolved handler to catch exactly that case and convert it into a tool result:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const handle = (name: unknown, params: unknown) =>
   rawHandle(name, params).pipe(
     Effect.catchAll((err) => {
@@ -87,7 +87,7 @@ The message is two halves. The first is the decoder's own description, up to 800
 
 One failure happens a layer earlier: the model invents a tool *name* — `apply_patch`, `str_replace_editor`, vocabulary imported from whichever harness dominated its training data. Now there's no handler to even address. The response itself fails to decode inside `generateText`, so the wrapper above never fires, and the naive outcome is a dead turn over a single wrong token. Instead, the loop catches the decode failure and synthesizes a corrective *user* message:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 let consecutiveMalformed = 0
 const MAX_MALFORMED = 3
 
@@ -116,7 +116,7 @@ The load-bearing clause is the roster. A hallucinated tool name isn't random noi
 
 When [efferent](https://github.com/xandreeddev/efferent) wants to run a shell command in an interactive session, a human approves or denies it (an LLM judge pre-screens the obviously-fine ones — a post of its own). The naive encoding of "deny" is an exception: permission denied, turn over. But the human pressed deny *for a reason*, and the model is about to choose its next action without knowing it. So a denial is a returned failure that carries the human's intent forward:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 const decision = yield* approval.request({
   tool: 'Bash',
   summary: command,
@@ -140,7 +140,7 @@ This is the gallery's only string co-authored at runtime by a human. The reason 
 
 [efferent](https://github.com/xandreeddev/efferent)'s sub-agents — child agent loops spawned to work on a folder — all draw from one shared token pool per top-level turn, the *token budget*: depth and step caps bound termination, the pool bounds spend. When it drains, two strings do the strategy work, and they sit side by side in the same file:
 
-```ts title="packages/core/src/usecases/tokenBudget.ts"
+```ts title="packages/sdk-core/src/usecases/tokenBudget.ts"
 /** The model-facing failure for a spawn attempted on a drained pool. */
 export const budgetExhaustedFailure = {
   error: 'BudgetExhausted',
@@ -157,7 +157,7 @@ The first refuses the *next* spawn — and notice it names the replacement strat
 
 The second string handles the harder case: a sub-agent that was already running when the pool hit zero stops at its next turn boundary — and its final text, at that moment, is mid-thought. The danger isn't the missing work; it's that the parent can't tell. A sub-agent's one-line summary is what the `run_agent` tool *returns*, and an unmarked partial summary reads exactly like a deliverable:
 
-```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
+```ts title="packages/sdk-core/src/usecases/buildScopeRuntime.ts"
 // A budget OR step-cap stop is an *ok* outcome with a partial result —
 // say so, so the parent model knows not to trust it as complete.
 const stopNote = stoppedByBudget
@@ -172,18 +172,18 @@ const summary = stopNote !== null
 
 The step-cap sibling says the same thing about a different limit: *"[stopped early: the step limit was reached — this result is partial]"*. Both convert *confidently incomplete* into *explicitly incomplete*, at exactly the place the parent reads — the cheapest possible insurance against the worst sub-agent failure mode, which is a parent building on work that never finished.
 
-### The headroom marker
+### The compaction marker
 
 This one isn't a failure at all, but it's the same genre. Oversized tool outputs are clipped before they enter the message buffer — keep the head and tail, drop the middle — because a 200KB build log would crowd out everything else (the cache-safe compression scheme behind this is a post of its own). The risk in any omission is that the model doesn't know what it isn't seeing — or worse, doesn't notice the hole and confabulates across it. So the marker that replaces the dropped middle ships its own undo instructions:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 /** Assemble the clipped text: head + a reversible marker (+ summary) + tail. */
 export const renderClip = (plan: ClipPlan, toolName: string, summary: string | null): string => {
   const dropped = `~${estimateTokens(plan.dropped.length)} tokens`
   const digest = summary !== null ? ` Summary of the omitted part: ${summary}` : ''
   return (
     `${plan.head}\n` +
-    `[…headroom: ${dropped} of this ${toolName} output omitted.${digest}` +
+    `[…compaction: ${dropped} of this ${toolName} output omitted.${digest}` +
     ` To retrieve it, re-run the tool narrower — read_file with offset/limit,` + // [!code highlight]
     ` a more specific grep, or bash piped through head/tail.]\n` +
     `${plan.tail}`
@@ -194,7 +194,7 @@ export const renderClip = (plan: ClipPlan, toolName: string, summary: string | n
 Mid-transcript, rendered, it reads:
 
 ```
-[…headroom: ~5800 tokens of this Bash output omitted. To retrieve it, re-run
+[…compaction: ~5800 tokens of this Bash output omitted. To retrieve it, re-run
 the tool narrower — read_file with offset/limit, a more specific grep, or bash
 piped through head/tail.]
 ```
@@ -205,7 +205,7 @@ Three things are deliberate. It sizes the hole — *~5800 tokens* — so the mod
 
 The last entry is for a failure that hasn't happened yet. [efferent](https://github.com/xandreeddev/efferent) keeps every sub-agent's transcript as a resumable node in a persistent tree (a post of its own), which creates a subtle hazard: a node's context is a cache of a world-model whose backing store — the repo — keeps changing. A node that read files two commits ago and is resumed today will confidently act on its in-context copies, because models trust context over re-reading; to the model, the in-context file *is* the file. So nodes are stamped with the workspace's git HEAD when their run finishes, and resuming against a moved HEAD prepends a brief to the task:
 
-```ts title="packages/core/src/usecases/staleness.ts"
+```ts title="packages/sdk-core/src/usecases/staleness.ts"
 export const stalenessNote = (args: {
   readonly oldRef: string
   readonly newRef: string
@@ -227,7 +227,7 @@ The brief is evidence first, instruction last. The ref range establishes that th
 
 These strings were written weeks apart for unrelated subsystems, but laid side by side they keep the same five rules.
 
-**Name the cause in the model's terms, not the OS's.** The model's working ontology is tools, schemas, scopes, budgets, turns — not errno. `EACCES` describes a syscall; `OutOfScope` describes the agent's world: *"packages/auth/login.ts is outside this scope (packages/core). Defer it to the parent in your summary."* And the vocabulary is pre-taught — the system prompt and the failure strings are two halves of one contract. The sub-agent prompt says: *"Tool failures are data: state what happened in one line, adjust, continue. An OutOfScope error means you must defer that part to the parent — keep going on what you can do."* The prompt teaches the noun; the failure uses it; the model recognizes instead of interprets.
+**Name the cause in the model's terms, not the OS's.** The model's working ontology is tools, schemas, scopes, budgets, turns — not errno. `EACCES` describes a syscall; `OutOfScope` describes the agent's world: *"packages/auth/login.ts is outside this scope (packages/sdk-core). Defer it to the parent in your summary."* And the vocabulary is pre-taught — the system prompt and the failure strings are two halves of one contract. The sub-agent prompt says: *"Tool failures are data: state what happened in one line, adjust, continue. An OutOfScope error means you must defer that part to the parent — keep going on what you can do."* The prompt teaches the noun; the failure uses it; the model recognizes instead of interprets.
 
 **Always include the next move.** Every string above carries an imperative after the dash: re-call, adjust, do it yourself, re-run narrower, re-read. The test I apply: delete everything before the dash — if the model could still act correctly on what remains, the message works. This holds down to the micro-failures; `edit_file`'s match error doesn't stop at the diagnosis: *"oldText is ambiguous (matches multiple times); include more surrounding context."*
 

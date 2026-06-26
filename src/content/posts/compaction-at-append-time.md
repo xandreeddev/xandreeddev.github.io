@@ -20,7 +20,7 @@ const prompt = [system, ...messages] // the 80k rides along, every single time
 
 At the usual rough exchange rate of ~4 characters per token, that one grep is ~20,000 tokens — a tenth of a 200k context window, billed as input again on every turn that follows. Twenty more turns means that single tool call costs roughly twenty times what it looks like it costs.
 
-This post is about cache-safe tool-output compression: clipping an agent's oversized tool results under two non-negotiable constraints — don't break the provider's prompt cache, and don't break the model's ability to get the data back. I didn't invent the approach. I took the core idea — and the name — from [chopratejas/headroom](https://github.com/chopratejas/headroom), a Python proxy whose *dependency* doesn't port to a TypeScript/Bun agent but whose *ideas* do. What follows is the version I rebuilt around those ideas inside [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect — where the module still carries the **headroom** name in tribute — with receipts.
+This post is about cache-safe tool-output compression: clipping an agent's oversized tool results under two non-negotiable constraints — don't break the provider's prompt cache, and don't break the model's ability to get the data back. I didn't invent the approach. I took the core idea from [chopratejas/headroom](https://github.com/chopratejas/headroom), a Python proxy whose *dependency* doesn't port to a TypeScript/Bun agent but whose *ideas* do. What follows is the version I rebuilt around those ideas inside [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect — where it lives as the **compaction** module (it wore the `headroom` name for a while, in tribute, before the rename) — with receipts.
 
 ## Three obvious fixes, three ways to lose
 
@@ -30,7 +30,7 @@ Before the design, the failure modes it's built against. Everyone's first three 
 
 **Summarize in place, later.** Let the conversation grow; when it gets fat, walk back through history and replace old tool outputs with summaries. This is the intuitive one, and it has a brutal hidden cost: it **rewrites history**, and history is what the provider's prompt cache is keyed on.
 
-That deserves its one paragraph. Every major provider caches the prompt **prefix**: if the first N bytes of your request exactly match a previous request, those bytes are served from cache at a steep discount instead of being re-processed at full price. The operative word is *exactly* — the prefix must be **byte-stable**. Edit message 12 of a 40-message conversation and every byte from message 12 onward misses the cache; the next request re-bills the bulk of the conversation at the full input rate. The per-provider mechanics (and where [efferent](https://github.com/xandreeddev/efferent) stamps its cache breakpoints) are a post of its own; the only fact headroom needs is this: **a conversation prefix, once sent, is either byte-stable or expensive.** Retroactive summarization converts a token-saving idea into a cache-invalidation machine.
+That deserves its one paragraph. Every major provider caches the prompt **prefix**: if the first N bytes of your request exactly match a previous request, those bytes are served from cache at a steep discount instead of being re-processed at full price. The operative word is *exactly* — the prefix must be **byte-stable**. Edit message 12 of a 40-message conversation and every byte from message 12 onward misses the cache; the next request re-bills the bulk of the conversation at the full input rate. The per-provider mechanics (and where [efferent](https://github.com/xandreeddev/efferent) stamps its cache breakpoints) are a post of its own; the only fact compaction needs is this: **a conversation prefix, once sent, is either byte-stable or expensive.** Retroactive summarization converts a token-saving idea into a cache-invalidation machine.
 
 **Raise the budget.** Use a bigger window, or just tolerate the bloat. But the re-billing arithmetic doesn't care how big the window is — you pay for the dead weight on every turn until the session ends. And a window that fills faster is a session that ends sooner: the dead weight drags you toward whatever ceiling forces a context reset, while the model gets measurably worse at finding the needle as the haystack grows.
 
@@ -46,9 +46,9 @@ There is exactly one moment in a tool output's life when it is *not yet history*
 
 That ordering insight is the entire architecture. Everything else in this post is mechanics hanging off of it. Here is where it lives in [efferent](https://github.com/xandreeddev/efferent)'s agent loop — the model has just responded, possibly with tool results attached:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const rawTail = responseToAgentMessages(res.content)
-// Headroom: oversized tool results are compressed HERE — the only moment
+// Compaction: oversized tool results are compressed HERE — the only moment
 // they enter the buffer — so the persisted history and every future
 // prompt prefix carry the clipped form from byte one. Caches stay warm;
 // nothing already sent is ever rewritten.
@@ -68,7 +68,7 @@ One detail in the loop is easy to miss and worth the emphasis: the loop's **hook
 
 The fallback compressor — what runs when the output has no recognizable shape — is a planned head+tail clip. Planning and rendering are split so a summary (next section's subject) can be woven in between, and the plan itself is a pure function:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 /** Default per-string budget for a tool result (~4k tokens). */
 export const DEFAULT_TOOL_RESULT_MAX_CHARS = 16_000
 
@@ -99,13 +99,13 @@ The 75/12.5 split is not numerology; it's a bet on where information lives in ma
 
 Here is what actually replaces the dropped middle:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 export const renderClip = (plan: ClipPlan, toolName: string, summary: string | null) => {
   const dropped = `~${estimateTokens(plan.dropped.length)} tokens`
   const digest = summary ? ` Summary of the omitted part: ${summary.trim()}` : ''
   return (
     `${plan.head}\n` +
-    `[…headroom: ${dropped} of this ${toolName} output omitted.${digest}` +
+    `[…compaction: ${dropped} of this ${toolName} output omitted.${digest}` +
     ` To retrieve it, re-run the tool narrower — read_file with offset/limit,` + // [!code highlight]
     ` a more specific grep, or bash piped through head/tail.]\n` +
     `${plan.tail}`
@@ -116,20 +116,20 @@ export const renderClip = (plan: ClipPlan, toolName: string, summary: string | n
 So an 80k-character bash output, clipped against the default budget, carries this where its middle used to be:
 
 ```
-[…headroom: ~16500 tokens of this Bash output omitted. To retrieve it,
+[…compaction: ~16500 tokens of this Bash output omitted. To retrieve it,
 re-run the tool narrower — read_file with offset/limit, a more specific
 grep, or bash piped through head/tail.]
 ```
 
 Read that as a message to the model, because that's what it is. It names what's missing, in the model's own currency (tokens, not characters). And then it does the load-bearing thing: it states, concretely, **how to get the data back**. `read_file` takes `offset` and `limit` parameters — page in exactly the lines you need. Grep accepts a narrower pattern or a subdirectory. Bash output pipes through `head` and `tail`. Every dropped byte is still sitting in the workspace, one cheaper, more targeted tool call away.
 
-That's the difference between a hole and a pointer. A bare `[truncated]` is an apology — it tells the model that data existed and is now gone, and the model's only move is to hope it didn't matter. The headroom marker is a **contract**: the data was elided *from the transcript*, not from the world, and here is the retrieval path. This isn't speculative — watching live sessions, the model treats it exactly that way: it hits a marker, decides the missing region matters, and greps its way to the buried line instead of trusting the hole. Compression the model can undo on demand stops being lossy in any sense that matters; it's lazy loading.
+That's the difference between a hole and a pointer. A bare `[truncated]` is an apology — it tells the model that data existed and is now gone, and the model's only move is to hope it didn't matter. The compaction marker is a **contract**: the data was elided *from the transcript*, not from the world, and here is the retrieval path. This isn't speculative — watching live sessions, the model treats it exactly that way: it hits a marker, decides the missing region matters, and greps its way to the buried line instead of trusting the hole. Compression the model can undo on demand stops being lossy in any sense that matters; it's lazy loading.
 
 ## When the output has a shape, keep the shape
 
 A blind head+tail clip is the *fallback*, not the strategy. Real tool outputs are rarely shapeless — and for the two shapes that dominate an agent's life, a structure-aware pass beats the blind clip so thoroughly that it runs first:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 // One string path: try a structure-aware plan first, fall back to the
 // blind head+tail clip. Both end in the same reversible marker.
 const compressString = (text: string, toolName: string) =>
@@ -147,7 +147,7 @@ const compressString = (text: string, toolName: string) =>
 
 Routing is deliberately conservative, and source-hinted. Search shape is accepted from **any** tool, because `path:42:` lines are unmistakable. Log shape is trusted **only** for bash output — a fetched web page or a file that happens to contain the word "error" must not get log treatment:
 
-```ts title="packages/core/src/usecases/headroomContent.ts"
+```ts title="packages/sdk-core/src/usecases/compactionContent.ts"
 export const planContentCompression = (text: string, toolName: string, maxChars: number) =>
   planSearchCompression(text, maxChars) ??
   (toolName === 'Bash' ? planLogCompression(text, maxChars) : null) // [!code highlight]
@@ -159,7 +159,7 @@ Run a blind clip over a grep that matched 2,000 lines across 50 files and you ke
 
 So the search planner inverts the blind clip's priorities. Every file stays visible; the bulk goes:
 
-```ts title="packages/core/src/usecases/headroomContent.ts"
+```ts title="packages/sdk-core/src/usecases/compactionContent.ts"
 /** `path:NN:` match lines and `path-NN-` context lines (grep -C). */
 const SEARCH_LINE = /^(.{1,260}?)[:-](\d+)[:-]/
 const SEARCH_MAX_PER_FILE = 5
@@ -195,7 +195,7 @@ The result reads like a table of contents with exact bookkeeping, capped off by 
 src/billing/invoice.ts (38 matches, showing 5)
   14:  const total = applyDiscount(subtotal, rate)
   …
-[…headroom: 1810 of 2000 matched lines omitted (50 files, 38 shown, first
+[…compaction: 1810 of 2000 matched lines omitted (50 files, 38 shown, first
 5 matches each). To retrieve, re-run the search narrower — a more specific
 pattern, a subdirectory, or fewer context lines.]
 ```
@@ -206,7 +206,7 @@ Exact counts, on purpose. "38 matches, showing 5" tells the model precisely how 
 
 The other dominant shape is the build/test log, and its information profile is the inverse of grep's: almost everything is filler, and the signal is *sparse and positional* — errors with their stack traces, warnings, the runner's summary lines, and the head and tail of the run. The log planner classifies every line and then selects under the budget in priority order:
 
-```ts title="packages/core/src/usecases/headroomContent.ts"
+```ts title="packages/sdk-core/src/usecases/compactionContent.ts"
 const ERROR_RE = /\b(error|fail(ed|ure|ing)?|fatal|exception|panic(ked)?|traceback|assert…)\b|✗|✖/i
 /** Continuation lines of a stack/trace block. */
 const TRACE_RE = /^\s+(at\s+\S|File "|\d+ \||[~^]+\s*$)|^\s*Caused by:|^\s{4,}\S/
@@ -233,11 +233,11 @@ Two more moves earn their keep. Identical warnings dedup to one occurrence annot
 
 ## A digest of the part you didn't see
 
-The marker tells the model how much it's missing and how to retrieve it. When the dropped middle is large, headroom goes one step further and tells it *what* it's missing — by paying a much cheaper model to read the discard pile.
+The marker tells the model how much it's missing and how to retrieve it. When the dropped middle is large, compaction goes one step further and tells it *what* it's missing — by paying a much cheaper model to read the discard pile.
 
-[efferent](https://github.com/xandreeddev/efferent) runs all agentic work on one main model, but keeps a **fast** role — a cheap, low-latency model slot — for one-shot helper calls inside a running turn (the multi-provider routing underneath is a post of its own). Headroom is that tier's flagship customer:
+[efferent](https://github.com/xandreeddev/efferent) runs agentic work on its **general** (and **code**) tiers, but keeps a **fast** role — a cheap, low-latency model slot — for one-shot helper calls inside a running turn (the multi-provider routing underneath is a post of its own). Compaction is that tier's flagship customer:
 
-```ts title="packages/core/src/usecases/headroom.ts"
+```ts title="packages/sdk-core/src/usecases/compaction.ts"
 /** Dropped middles smaller than this aren't worth a fast-model summary. */
 const SUMMARY_MIN_DROPPED_CHARS = 4_000
 /** Cap on what we FEED the summarizer (a 2M-char log needn't be read whole). */
@@ -261,7 +261,7 @@ const summarize = (dropped: string): Effect.Effect<string | null> =>
 
 The prompt is tuned for what a *model* needs from a summary, which is not what a human needs. "Dense and factual: preserve identifiers, file paths, numbers, error messages" — a digest that says "various modules compiled with some warnings" is worthless; one that says "modules 0–1199 compiled clean except legacy.ts (deprecated API ×2); foo.test.ts failed at foldThing src/foo.ts:42" hands the model real coordinates it can act on or retrieve against. The digest lands inside the marker itself: `Summary of the omitted part: …` — so the hole comes pre-labeled.
 
-The integration is best-effort by construction, and Effect makes both halves of that visible in the types. The `utility` above comes from `Effect.serviceOption(UtilityLlm)` — the service is an *optional* dependency, so headroom works in environments that never wired a utility model (evals, tests, minimal setups). And the `catchAll` means a rate-limited or misconfigured summarizer degrades to the plain marker rather than failing the compression pass; the whole-system Effect tour is a post of its own. Note also where the digest *doesn't* run: the search planner sets `omitted: ''` because two thousand homogeneous grep matches contain nothing a 120-word digest could add — the per-file counts already said it all.
+The integration is best-effort by construction, and Effect makes both halves of that visible in the types. The `utility` above comes from `Effect.serviceOption(UtilityLlm)` — the service is an *optional* dependency, so compaction works in environments that never wired a utility model (evals, tests, minimal setups). And the `catchAll` means a rate-limited or misconfigured summarizer degrades to the plain marker rather than failing the compression pass; the whole-system Effect tour is a post of its own. Note also where the digest *doesn't* run: the search planner sets `omitted: ''` because two thousand homogeneous grep matches contain nothing a 120-word digest could add — the per-file counts already said it all.
 
 The cost math is almost embarrassing. The summarizer reads at most 24,000 characters (~6k tokens) and writes ~160, once, on a tier priced at small fractions of the main model. The clip it annotates saves ~16k main-model input tokens *per remaining turn* — over a 20-turn tail, a few hundred thousand tokens at the most expensive rate you buy. The digest is a rounding error purchasing insurance on the clip; the spend is still accounted honestly, surfaced through a loop hook into the session's per-role ledger rather than hidden in the noise.
 
@@ -269,14 +269,14 @@ The cost math is almost embarrassing. The summarizer reads at most 24,000 charac
 
 Per-string clipping at append time is the centerpiece, but it's one tier of three, and the same head+tail philosophy runs through all of them.
 
-Below headroom sit **tool-level output caps**: bounds on what a single call may return at all. The interesting design decision is that they keep head+tail too:
+Below compaction sit **tool-level output caps**: bounds on what a single call may return at all. The interesting design decision is that they keep head+tail too:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 /**
  * Tool-level output cap: keep head + tail, drop the middle. The tail
  * matters — long runs END in their conclusion (exit summaries,
  * 'N pass / M fail'), and a head-only cut erased exactly the lines
- * headroom's log compression most wants to keep.
+ * compaction's log compression most wants to keep.
  */
 export const truncateOutput = (s: string, max: number): string => {
   if (s.length <= max) return s
@@ -290,28 +290,28 @@ export const truncateOutput = (s: string, max: number): string => {
 }
 ```
 
-That comment records a real lesson: an earlier head-only cap was destroying the exact summary lines the log planner downstream is built to preserve. The tiers have to agree on where signal lives, or the lower one starves the upper one. Tools with natural paging — `read_file`, `web_fetch` — carry their own caps and report `truncated: true`; headroom is the **generic backstop** for everything without one: bash stdout, grep floods, whatever tool gets added next year by someone who never read this post.
+That comment records a real lesson: an earlier head-only cap was destroying the exact summary lines the log planner downstream is built to preserve. The tiers have to agree on where signal lives, or the lower one starves the upper one. Tools with natural paging — `read_file`, `web_fetch` — carry their own caps and report `truncated: true`; compaction is the **generic backstop** for everything without one: bash stdout, grep floods, whatever tool gets added next year by someone who never read this post.
 
-Above headroom sits the question of **sub-agents**. [efferent](https://github.com/xandreeddev/efferent) fans work out to child agents, each running the same loop with its own conversation — and a sub-agent that doesn't compress would ship its bloat right back to the parent as a tool result. The budget therefore travels with the run, not the wiring: it rides a `FiberRef` — Effect's typed, fiber-scoped take on ambient context, inherited by every child fiber — so every loop in the tree compresses like the root without a parameter threaded through forty signatures:
+Above compaction sits the question of **sub-agents**. [efferent](https://github.com/xandreeddev/efferent) fans work out to child agents, each running the same loop with its own conversation — and a sub-agent that doesn't compress would ship its bloat right back to the parent as a tool result. The budget therefore travels with the run, not the wiring: it rides a `FiberRef` — Effect's typed, fiber-scoped take on ambient context, inherited by every child fiber — so every loop in the tree compresses like the root without a parameter threaded through forty signatures:
 
-```ts title="packages/core/src/usecases/runContext.ts"
+```ts title="packages/sdk-core/src/usecases/runContext.ts"
 export interface RunContext {
   readonly rootConversationId: ConversationId | null
   readonly depth: number
   readonly tokenPool: TokenPool // one shared spend pool for the whole subtree
-  /** Headroom budget (chars) per tool-result string, threaded so
+  /** Compaction budget (chars) per tool-result string, threaded so
    *  sub-agent loops compress like the root. 0 disables. */
   readonly toolResultMaxChars?: number // [!code highlight]
 }
 ```
 
-The spawn machinery reads `toolResultMaxChars` off the ambient context and passes it into every child loop it starts — set the budget once at the top of a run and the entire agent tree honors it, including agents spawned three levels down by code that has never heard of headroom.
+The spawn machinery reads `toolResultMaxChars` off the ambient context and passes it into every child loop it starts — set the budget once at the top of a run and the entire agent tree honors it, including agents spawned three levels down by code that has never heard of compaction.
 
 And when the *whole conversation* nears the window despite all of this, a different mechanism folds it at a deliberate boundary — one intentional prefix rebuild, then byte-stable again — but checkpoint folding and handoffs are a post of its own.
 
 ## What it costs
 
-Honesty section. Headroom is heuristics about where information lives, and heuristics have failure modes.
+Honesty section. Compaction is heuristics about where information lives, and heuristics have failure modes.
 
 **Any compression can drop the one line that mattered.** The blind clip's middle, the search planner's match #6 in some file, a log line that looked like filler — sometimes that was the line. The mitigation is the whole point of the marker design: the data is never *gone*, it's one targeted tool call away, and the marker spells out the path. But the mitigation costs a round trip, and it only fires if the model notices it's missing something. A model that confidently reasons over a clipped transcript without pulling the marker's thread is the residual risk, and no marker text fully retires it.
 
@@ -323,7 +323,7 @@ Honesty section. Headroom is heuristics about where information lives, and heuri
 
 ## Buckets spill; caches page
 
-Most agent harnesses treat the context window as a bucket: pour tool outputs in until it overflows, then do something violent — truncate, summarize the world, start over. Headroom treats it as what it actually is: the hottest tier of a storage hierarchy. The full data stays in the workspace, on disk, retrievable. The transcript holds a working set — heads, tails, structure, exact counts, a digest — plus a pointer for paging the rest back in. The human rail gets the whole stream because humans skim for free.
+Most agent harnesses treat the context window as a bucket: pour tool outputs in until it overflows, then do something violent — truncate, summarize the world, start over. Compaction treats it as what it actually is: the hottest tier of a storage hierarchy. The full data stays in the workspace, on disk, retrievable. The transcript holds a working set — heads, tails, structure, exact counts, a digest — plus a pointer for paging the rest back in. The human rail gets the whole stream because humans skim for free.
 
 Once you see it that way, the design writes itself, and the one rule that makes it sound is the one this post is named for: **eviction happens at write time, never after.** Compress the moment the data enters history and the cache stays warm, the persisted record agrees with what the model saw, and nothing is ever rewritten. Compress later and you're not managing memory anymore — you're falsifying it, and paying the provider for the privilege.
 

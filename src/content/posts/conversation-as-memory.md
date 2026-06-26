@@ -45,7 +45,7 @@ CREATE TABLE messages (
 
 The two load-bearing details are `position` and that `UNIQUE` constraint. The store computes the next position itself, atomically, at the moment of insert — the caller never passes one:
 
-```ts title="packages/adapters/src/conversationStore/sqlite.ts"
+```ts title="packages/sdk-adapters/src/conversationStore/sqlite.ts"
 INSERT INTO messages (id, conversation_id, position, role, content, created_at)
 VALUES (
   ${id}, ${conversationId},
@@ -62,14 +62,14 @@ It sounds almost too plain to write a post about. But this one rule — *the pre
 
 A message isn't free-form text. It's a tagged union — the model's turns, the user's, and tool results all have different shapes:
 
-```ts title="packages/core/src/entities/Conversation.ts"
+```ts title="packages/sdk-core/src/entities/Conversation.ts"
 export const AgentMessage = Schema.Union(UserMessage, AssistantMessage, ToolMessage)
 export type AgentMessage = typeof AgentMessage.Type
 ```
 
 Persisting it is a small codec. On the way down, the `role` is split out into its own column (so you can filter without parsing JSON) and the rest is serialized; on the way *up*, the role is re-attached and the whole thing is **decoded**, not merely parsed:
 
-```ts title="packages/adapters/src/database/messageCodec.ts"
+```ts title="packages/sdk-adapters/src/database/messageCodec.ts"
 // down: role to its own column, the rest to JSON
 export const encodeMessageContent = (msg: AgentMessage): string => {
   const { role: _role, ...rest } = msg as Record<string, unknown>
@@ -85,7 +85,7 @@ That distinction matters. A row on disk is bytes; it becomes a trustworthy `Agen
 
 Here's the part that felt like magic on Wednesday morning, with the magic removed. There is no "restore session" routine. Resuming is the same three moves as starting fresh — read the log, send it, keep appending:
 
-```ts title="packages/core/src/usecases/runAgent.ts"
+```ts title="packages/sdk-core/src/usecases/runAgent.ts"
 yield* store.ensure(conversationId, workspaceDir)            // idempotent: create it if new
 const checkpoint = yield* store.getLatestCheckpoint(conversationId)
 const active     = yield* store.listActive(conversationId)  // the history after the last fold
@@ -106,7 +106,7 @@ Note the last line: the loop returns `result.newTail` — the precise list of me
 
 The store exposes the history two ways, and the difference is the whole game:
 
-```ts title="packages/core/src/ports/ConversationStore.ts"
+```ts title="packages/sdk-core/src/ports/ConversationStore.ts"
 readonly list:       (id: ConversationId) => Effect.Effect<ReadonlyArray<AgentMessage>, …> // the permanent record
 readonly listActive: (id: ConversationId) => Effect.Effect<ReadonlyArray<AgentMessage>, …> // only what's after the latest fold
 ```
@@ -117,7 +117,7 @@ readonly listActive: (id: ConversationId) => Effect.Effect<ReadonlyArray<AgentMe
 
 A million-token window fills. You can't re-send a forty-thousand-line history every turn forever. The instinct is to delete or rewrite old messages — and that instinct breaks the append-only rule and everything built on it. The escape is a **checkpoint**: a single row that says *a summary stands in for everything up to position N.*
 
-```ts title="packages/core/src/entities/Conversation.ts"
+```ts title="packages/sdk-core/src/entities/Conversation.ts"
 export const Checkpoint = Schema.Struct({
   conversationId:  ConversationId,
   messagePosition: Schema.Number,   // "everything up to here is covered by the summary"

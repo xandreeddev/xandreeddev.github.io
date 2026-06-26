@@ -51,11 +51,17 @@ Call the property we lost **headless**: the ability to run with no human and no 
 
 In [efferent](https://github.com/xandreeddev/efferent), the agent loop's entire observable output is a value of one union type. This file is the contract every interface is built against — worth reading in full, because everything else in this post is a consumer of it:
 
-```ts title="packages/cli/src/events.ts"
+```ts title="packages/sdk-core/src/entities/AgentEvent.ts"
 export type AgentEvent = // [!code highlight]
   // internal drain sentinel — never serialized (more on this below)
   | { readonly type: 'flush' }
   | { readonly type: 'turn_start'; readonly turnIndex: number }
+  | {
+      readonly type: 'user_message' // the human's turn (or a sub-agent's seed task)
+      readonly turnIndex: number
+      readonly text: string
+      readonly nodeId?: string
+    }
   | {
       readonly type: 'assistant_message'
       readonly turnIndex: number
@@ -63,6 +69,7 @@ export type AgentEvent = // [!code highlight]
       readonly reasoning?: string
       readonly usage?: TokenUsage
       readonly nodeId?: string // set when a sub-agent said it
+      readonly subAgentRole?: 'general' | 'code' // its tier, so spend lands right
     }
   | {
       readonly type: 'tool_call_start'
@@ -87,6 +94,7 @@ export type AgentEvent = // [!code highlight]
       readonly task: string
       readonly nodeId?: string
       readonly parentNodeId?: string // nests this run under its parent
+      readonly role?: 'general' | 'code' // the spawned tier
     }
   | {
       readonly type: 'subagent_end'
@@ -95,12 +103,12 @@ export type AgentEvent = // [!code highlight]
       readonly summary: string
       readonly filesChanged: ReadonlyArray<string>
       readonly nodeId?: string
-      readonly usage?: TokenUsage // …
+      readonly usage?: SubAgentUsage // …
     }
   | { readonly type: 'skill_load'; readonly name: string }
   | {
-      readonly type: 'helper_usage' // a fast/cheap-tier call ran inside the loop
-      readonly role: 'fast' | 'cheap'
+      readonly type: 'helper_usage' // a fast-tier call ran inside the loop (compaction digest, title)
+      readonly role: 'fast'
       readonly usage: TokenUsage
     }
   | {
@@ -109,9 +117,34 @@ export type AgentEvent = // [!code highlight]
       readonly messages: ReadonlyArray<AgentMessage>
     }
   | { readonly type: 'error'; readonly message: string }
+  // the run is parked on a bash-approval request; `approval_resolved`
+  // clears the sheet once any attached client answers
+  | {
+      readonly type: 'approval_needed'
+      readonly tool: string
+      readonly summary: string
+      readonly cwd: string
+      readonly ruleKey: string
+      readonly reason?: string
+      readonly folder?: string
+    }
+  | { readonly type: 'approval_resolved'; readonly sessionId?: string }
+  | {
+      readonly type: 'needs_human' // a decision a human must make…
+      readonly summary: string
+      readonly reason: string
+      readonly parked: boolean // true = an UNATTENDED run hit it and was denied for later review
+      readonly nodeId?: string
+    }
+  | {
+      readonly type: 'board_note' // an inter-agent message hit the fleet bus
+      readonly from: string
+      readonly note: string
+      readonly at: number
+    }
 ```
 
-Read it as a narration grammar. A run is a sequence of turns (`turn_start`); each turn produces prose (`assistant_message` — with the model's reasoning and token usage when available) and tool activity (`tool_call_start` / `tool_call_end`, paired by the provider's call id, because two same-named calls in one turn share a name but not an id). Sub-agents open and close their own bracketed stories (`subagent_start` / `subagent_end`, with a summary and the files they changed), nested via `parentNodeId` when a sub-agent spawns its own. Skills loading and helper-tier LLM calls — the cheap background work, like compression digests — get their own lines so a consumer can keep an honest spend ledger. And `agent_end` closes the run with the final text plus the full message transcript.
+Read it as a narration grammar. A run is a sequence of turns (`turn_start`); each turn produces prose (`assistant_message` — with the model's reasoning and token usage when available) and tool activity (`tool_call_start` / `tool_call_end`, paired by the provider's call id, because two same-named calls in one turn share a name but not an id). Sub-agents open and close their own bracketed stories (`subagent_start` / `subagent_end`, with a summary and the files they changed), nested via `parentNodeId` when a sub-agent spawns its own. Skills loading and helper-tier LLM calls — the fast-tier background work, like compaction digests — get their own lines so a consumer can keep an honest spend ledger. Approvals surface as data too (`approval_needed` and, when nobody's watching, `needs_human` with `parked: true`), and `board_note` carries inter-agent fleet chatter — both consumed below. And `agent_end` closes the run with the final text plus the full message transcript.
 
 Two design choices in that union do most of the work. First, **everything is data, nothing is presentation** — no color, no layout, no strings pre-formatted for a terminal. `args` and `result` are `unknown` because they're tool-shaped, not display-shaped. Second, the events carry enough identity (`turnIndex`, call ids, `nodeId`) that a consumer can reconstruct *structure* — which call belongs to which turn belongs to which sub-agent — instead of just receiving a flat log.
 
@@ -123,7 +156,7 @@ The loop itself never touches stdout, a socket, or a screen. It accepts an optio
 
 The CLI wires those hooks to a queue, and this adapter is mechanical — one `Queue.offer` per hook:
 
-```ts title="packages/cli/src/events.ts"
+```ts title="packages/code/src/events.ts"
 export const makeEventHooks = <R = never>(
   queue: Queue.Queue<AgentEvent>, // [!code highlight]
 ): AgentHooks<R> => ({
@@ -152,7 +185,7 @@ A one-shot mode runs the agent, renders the events, prints a result, and exits. 
 
 The deterministic fix is a **sentinel** — a marker value with no meaning except "you have reached the end." After the run completes, the mode offers `{ type: 'flush' }`; since nothing else produces anymore, it is *strictly* the last element. The consumer returns when it takes it, and the mode joins the consumer fiber:
 
-```ts title="packages/cli/src/modes/json.ts"
+```ts title="packages/code/src/modes/json.ts"
 // The run is done — nothing else produces, so the sentinel is strictly last.
 yield* Queue.offer(queue, { type: 'flush' }) // [!code highlight]
 yield* Fiber.join(consumer)
@@ -169,14 +202,14 @@ The default when you run `efferent` in an interactive terminal is the full TUI �
 ## Client two: print mode — the agent as a shell command
 
 ```bash
-efferent "summarise the public API of packages/core"   # answer on stdout
+efferent "summarise the public API of packages/sdk-core"   # answer on stdout
 echo 'list every TODO under src/ with file paths' | efferent
 efferent -p --allow-bash "fix the failing rpc test" > report.md
 ```
 
 Print mode is the agent as a well-behaved Unix citizen: run once, do the work, print the answer, exit. The discipline that makes it composable is the stream split — **stdout carries exactly one thing, the final text**; the running tool log goes to stderr, where a human can glance at progress without polluting whatever stdout is piped into. The fold is a switch statement that renders three event types and deliberately drops the rest:
 
-```ts title="packages/cli/src/modes/print.ts"
+```ts title="packages/code/src/modes/print.ts"
 const consumeEvents = (queue: Queue.Queue<AgentEvent>) =>
   Effect.gen(function* () {
     while (true) {
@@ -203,7 +236,7 @@ After the sentinel-and-join drain, one line: `process.stdout.write(result.finalT
 
 Print is also where mode *selection* earns its keep. You never asked for it in those examples — the dispatcher inferred it:
 
-```ts title="packages/cli/src/main.ts"
+```ts title="packages/code/src/main.ts"
 const resolveMode = (modeFlag, printFlag, hasPromptArg): Mode => {
   if (modeFlag !== 'auto') return modeFlag // explicit always wins
   if (printFlag) return 'print'
@@ -217,7 +250,7 @@ A prompt argument means you want an answer, not a session. Piped stdin (when the
 ## Client three: `--mode json` — the agent as a data source
 
 ```bash
-efferent --mode json 'audit packages/cli for unused exports' \
+efferent --mode json 'audit packages/code for unused exports' \
   | jq -r 'select(.type == "tool_call_start") | .toolName'
 ```
 
@@ -225,8 +258,8 @@ JSON mode is print mode's control flow with the most literal fold imaginable: ev
 
 ```
 {"type":"turn_start","turnIndex":0}
-{"type":"tool_call_start","turnIndex":0,"id":"call_x7Qf","toolName":"read_file","args":{"path":"packages/cli/src/main.ts"}}
-{"type":"tool_call_end","turnIndex":0,"id":"call_x7Qf","toolName":"read_file","ok":true,"result":{"path":"packages/cli/src/main.ts","content":"…","totalLines":369,"truncated":false}}
+{"type":"tool_call_start","turnIndex":0,"id":"call_x7Qf","toolName":"read_file","args":{"path":"packages/code/src/main.ts"}}
+{"type":"tool_call_end","turnIndex":0,"id":"call_x7Qf","toolName":"read_file","ok":true,"result":{"path":"packages/code/src/main.ts","content":"…","totalLines":369,"truncated":false}}
 {"type":"assistant_message","turnIndex":1,"text":"Three exports are never imported…","usage":{"inputTokens":18412,"outputTokens":231,"totalTokens":18643,"cacheReadTokens":15890}}
 {"type":"agent_end","finalText":"Three exports are never imported: …","messages":[…]}
 ```
@@ -270,7 +303,7 @@ Here's what headless operation genuinely changes, and it deserves to be said pla
 
 Without the flag, bash isn't silently dropped — it fails *as data the model reads*:
 
-```ts title="packages/core/src/usecases/codingToolkit.ts"
+```ts title="packages/sdk-core/src/usecases/codingToolkit.ts"
 Bash: ({ command, timeout }) =>
   Effect.gen(function* () {
     if (!allowBash) {
@@ -285,7 +318,7 @@ Bash: ({ command, timeout }) =>
 
 Because tools declare their failures as returnable results, that error lands in the model's context as an ordinary tool outcome — so the agent routes around it, leaning on the read and search tools and telling you what it *would* have run, instead of the turn dying. With the flag, the `Approval` port — the interface every approval decision flows through — is satisfied by an allow-all implementation provided as a layer:
 
-```ts title="packages/cli/src/modes/json.ts"
+```ts title="packages/code/src/modes/json.ts"
 yield* runAgent(config, cid, input.prompt, hooks, input.cwd).pipe(
   Effect.provide(runtime.handlerLayer),
   // Headless: --allow-bash already encodes the standing decision.

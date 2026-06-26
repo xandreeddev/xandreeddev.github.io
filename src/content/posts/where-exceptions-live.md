@@ -35,7 +35,7 @@ The rule has a pleasant property: **you can grep for violations.** `try {`, bare
 
 The snippet that started this. The approval judge is a fast-tier model that pre-screens bash commands; its reply is supposed to be one JSON object, and the parser held it to that — using both forbidden words:
 
-```ts title="packages/core/src/usecases/autoApproval.ts"
+```ts title="packages/sdk-core/src/usecases/autoApproval.ts"
 export const parseJudgeVerdict = (text: string): JudgeVerdict => {
   const match = text.match(/\{[\s\S]*\}/)
   if (match === null) return { verdict: 'prompt' }
@@ -75,7 +75,7 @@ The lesson isn't "I made the same mistake twice." It's *where* the mistakes were
 
 The rule says ports return Effects. Thirty-nine of [efferent](https://github.com/xandreeddev/efferent)'s port methods did; the sweep found two that didn't, both on the OAuth-flow port:
 
-```ts title="packages/core/src/ports/AuthFlow.ts"
+```ts title="packages/sdk-core/src/ports/AuthFlow.ts"
 readonly supportsOAuth: (provider: Provider) => boolean // [!code --]
 readonly parseRedirect: (input: string) => OAuthRedirect // [!code --]
 readonly supportsOAuth: (provider: Provider) => Effect.Effect<boolean> // [!code ++]
@@ -86,7 +86,7 @@ readonly parseRedirect: (input: string) => Effect.Effect<OAuthRedirect> // [!cod
 
 `parseRedirect` is the instructive one. Implementations parse a pasted redirect URL, and URL parsing in JavaScript means `new URL(value)` — which throws. With the port returning a bare value, the adapter *had* to contain that exception synchronously, and it did, with try/catch as control flow ("not a URL → try the next format"). The port's shape was forcing the implementation's hand. After the change, the adapter could have used `Effect.try` — but the better fix was to delete the exception entirely:
 
-```ts title="packages/adapters/src/auth/oauth/anthropic.ts"
+```ts title="packages/sdk-adapters/src/auth/oauth/anthropic.ts"
 try { // [!code --]
   const url = new URL(value) // [!code --]
   return { code: url.searchParams.get('code') ?? undefined /* … */ } // [!code --]
@@ -110,7 +110,7 @@ Effect distinguishes **failures** from **defects**. A failure is an expected err
 
 Now look at what the SQL stores did with stored messages. SQLite returns a message row's JSON as a *string*; Postgres returns parsed `jsonb`. One shared codec absorbed the difference:
 
-```ts title="packages/adapters/src/database/messageCodec.ts"
+```ts title="packages/sdk-adapters/src/database/messageCodec.ts"
 export const reassembleMessageRow = (role: string, content: unknown): unknown => {
   const parsed = typeof content === 'string' ? JSON.parse(content) : content // [!code highlight]
   return /* …re-attach role… */
@@ -119,7 +119,7 @@ export const reassembleMessageRow = (role: string, content: unknown): unknown =>
 
 This is adapter code — exceptions are *allowed* here, right? Right — but "allowed in an adapter" means *captured inside an Effect*, where the capture maps the throw onto a tagged error. This throw is captured by nothing. Look at where the codec was called — one file over, in the SQL store:
 
-```ts title="packages/adapters/src/conversationStore/sqlite.ts"
+```ts title="packages/sdk-adapters/src/conversationStore/sqlite.ts"
 const decodeMessage = (row: MessageRow) =>
   Schema.decodeUnknown(AgentMessage)(
     reassembleMessageRow(row.role, row.content), // runs while BUILDING the Effect, not inside it // [!code highlight]
@@ -130,7 +130,7 @@ The `mapError` promises that a bad row becomes a tagged `ConversationStoreError`
 
 The fix makes the codec total — an unparseable string passes through *as the string*, and the schema decode right behind it rejects it through the channel that was always supposed to handle this:
 
-```ts title="packages/adapters/src/database/messageCodec.ts"
+```ts title="packages/sdk-adapters/src/database/messageCodec.ts"
 const JsonValue = Schema.parseJson(Schema.Unknown)
 const parseJsonString = (s: string): unknown =>
   Either.getOrElse(Schema.decodeUnknownEither(JsonValue)(s), () => s) // [!code highlight]
@@ -144,7 +144,7 @@ This is the finding that justifies the whole rule. The first three were aestheti
 
 For contrast, here's what the rule looks like where exceptions are supposed to live. Every HTTP call in the OAuth adapters has this shape:
 
-```ts title="packages/adapters/src/auth/oauth/anthropic.ts"
+```ts title="packages/sdk-adapters/src/auth/oauth/anthropic.ts"
 const postToken = (body: Record<string, string>): Effect.Effect<OAuthTokens, AuthError> =>
   Effect.tryPromise({
     try: async () => {
@@ -166,7 +166,7 @@ Against that: every one of the four findings was *invisible at review time* and 
 ```bash
 # fails the build if exception machinery sneaks into the domain
 ! grep -rnE '(^|[^A-Za-z])(try \{|throw |JSON\.parse|decodeUnknownSync)' \
-    packages/core/src --include='*.ts' --exclude='*.test.ts'
+    packages/sdk-core/src --include='*.ts' --exclude='*.test.ts'
 ```
 
 A rule you can grep for is a rule that survives contributors, tired evenings, and coding agents. That last one isn't hypothetical: most of [efferent](https://github.com/xandreeddev/efferent) is written with an agent in the loop, and an agent will absolutely reach for `try/catch` around `JSON.parse` — it's the most statistically likely error handling in its training data. The grep doesn't care. It fails the build, the agent reads the failure, and the next attempt uses the decoder. Architecture that defends itself is the only kind that holds when the contributor never gets tired and never reads the style guide.

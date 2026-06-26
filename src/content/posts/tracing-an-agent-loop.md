@@ -19,7 +19,7 @@ So you trace the tree. And the first real decision — the one this whole post t
 
 Here's the shape. A top-level run wraps the loop; each turn wraps one `generateText`; under a turn sit the LLM call and the tool calls it triggered; a tool that spawns a sub-agent nests that sub-agent's whole tree beneath it. The span *names* are written for the one place a human reads them — the trace waterfall — so they carry the identifiers you'd want at a glance:
 
-```ts title="packages/core/src/telemetry/spanNames.ts"
+```ts title="packages/sdk-core/src/telemetry/spanNames.ts"
 export const runSpanName = (): string => 'agent.run'
 
 export const turnSpanName = (turnIndex: number): string => `agent.turn ${turnIndex}`
@@ -43,7 +43,7 @@ Say you want a panel: p95 turn latency for a conversation. The obvious query mat
 
 The fix is to stop asking the machine to parse a human-readable string. Put a **stable, low-cardinality attribute** on every span that names its *role* in the trace, decoupled from whatever the span is called this month:
 
-```ts title="packages/core/src/telemetry/spanNames.ts"
+```ts title="packages/sdk-core/src/telemetry/spanNames.ts"
 /**
  * Stable, rename-proof discriminator for an agent span's role. Span *names*
  * are for humans and change freely; this is the machine identity dashboards
@@ -64,7 +64,7 @@ export const agentSpanAttributes = (
 
 Now every span carries `agent.kind`, and the dashboard queries *that*. The run span is opened with it:
 
-```ts title="packages/core/src/usecases/runAgent.ts"
+```ts title="packages/sdk-core/src/usecases/runAgent.ts"
 Effect.withSpan('agent.run', {
   attributes: {
     ...agentSpanAttributes('run', conversationId),
@@ -80,7 +80,7 @@ and so is every turn, tool, and LLM span. The name `agent.turn 3` is now pure co
 
 The second stable attribute earns its keep differently. `agent.conversation_id` is stamped on *every* span in a run — run, turn, llm, tool, sub-agent — which means you can ask "show me everything that happened in this conversation" with a flat equality filter, no tree-walking:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 // On the tool span — the conversation id is ambient on the fiber's RunContext,
 // so a tool nested under a sub-agent under a run still gets tagged.
 const rc = yield* FiberRef.get(RunContextRef)
@@ -117,7 +117,7 @@ The id comes from the fiber's ambient `RunContext` (the first post covered how s
 
 The most attribute-rich span is the model call, and there it pays to not invent your own vocabulary. OpenTelemetry has a published semantic convention for generative-AI calls — the `gen_ai.*` namespace — and using it means generic OTel tooling (and your future self, and anyone who's seen another LLM app's traces) reads your spans without a decoder ring. The router annotates the active `llm.generate` span as the response passes through, untouched:
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 yield* Effect.annotateCurrentSpan({
   ...agentSpanAttributes('llm', rc.rootConversationId),
   'gen_ai.request.model': sel.modelId,
@@ -136,7 +136,7 @@ Two of those deserve a note. `gen_ai.cost_usd` is *derived* — the usage runs t
 
 Traces answer "what happened in *this* run." Metrics answer "what's happening across *all* runs" — the rate/error/duration view you alert on. The first post covered how Effect metrics are defined and tagged; operationally, the agent records into them at the three places the loop pivots. A turn, timed:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 const turnStart = yield* Clock.currentTimeMillis
 const outcome = yield* LanguageModel.generateText({ prompt, toolkit }).pipe(
   Effect.tap((res) =>
@@ -156,7 +156,7 @@ yield* recordTurn((yield* Clock.currentTimeMillis) - turnStart) // [!code highli
 
 And every tool result, tallied by name and outcome, with a failure also bumping the error counter:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 for (const tr of responseToolResults(content)) {
   yield* recordToolCall(tr.toolName, tr.ok)
   if (!tr.ok) {
@@ -173,7 +173,7 @@ That's the whole RED story for an agent: `agent_turns_total` and `agent_turn_lat
 
 A trace tells you a tool call failed; it doesn't, by itself, tell you what the model *said*, or what arguments it passed. That's what the correlated logs are for. Because a log emitted inside a span is stamped with that span's id, a trace viewer can show "the logs that happened during this span" — and the agent uses that pane deliberately, writing the LLM's input and output as logs *inside* the `llm.generate` span:
 
-```ts title="packages/adapters/src/llm/router.ts"
+```ts title="packages/sdk-adapters/src/llm/router.ts"
 const output = content['gen_ai.completion']
 if (output !== undefined) yield* Effect.logInfo(`llm output ▸ ${output}`)
 const input = content['gen_ai.prompt']
@@ -182,7 +182,7 @@ if (input !== undefined) yield* Effect.logInfo(`llm input ▸ ${input}`)
 
 and the tool's args and result as a log inside the `agent.tool` span:
 
-```ts title="packages/core/src/usecases/agentLoop.ts"
+```ts title="packages/sdk-core/src/usecases/agentLoop.ts"
 yield* Effect.logInfo(
   `tool ${String(name)}(${safeArgsSummary(params)}) ${failed ? '✗ failed' : '▸ ok'}\n` +
     safeResultSummary(r, 1500),
@@ -197,7 +197,7 @@ Two of those helpers are doing careful work that's easy to overlook. `safeArgsSu
 
 Prompts and completions are the most useful thing to put in a trace and the most dangerous. They're the model's actual input and output — invaluable for debugging, and exactly the data you can't ship to a telemetry backend without thinking. So capture is gated and bounded. The `gen_ai.prompt`/`gen_ai.completion` attributes are only populated when telemetry is on at all, and even then each is clipped, keeping the useful ends:
 
-```ts title="packages/core/src/telemetry/metrics.ts"
+```ts title="packages/sdk-core/src/telemetry/metrics.ts"
 export const GEN_AI_CONTENT_CAP = 12_000
 
 /** Clip keeping head and tail — a prompt's system block + latest message are
