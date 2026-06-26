@@ -17,11 +17,11 @@ In most systems "production" means users, and users are at least predictably wei
 
 Property-based testing is the fix, and it's old, well-understood technology — QuickCheck shipped in 1999. What's new enough to be worth a post is how cheap Effect has made it: the library ships fast-check inside it, and — the part that actually changed my testing habits — it can **derive the test-data generators from the same schemas that validate production data**. One source of truth describes what a message is; the validator and the fuzzer are two views of it.
 
-Everything below is real code from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect — specifically the test suite added in one commit that property-tested the message-mapping seam, the context-compression planners, and a couple of parsers. We'll start with the bug class, build property testing up from nothing, and then walk the actual properties.
+Everything below is real code from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect — specifically the test suite added in one commit that property-tested the message-mapping seam, the context-compression planners, and a couple of parsers. We'll start with the bug class, build property testing up from nothing, and then walk the actual properties.
 
 ## The seam that has to be perfect: messages in, messages out
 
-[efferent](https://github.com/xandreeddev/agent) persists conversations as `AgentMessage` rows — a shape structurally mirroring the Vercel AI SDK's `ModelMessage`, kept stable so the database survives framework changes. The LLM layer, though, is `@effect/ai`, which speaks its own `Prompt` and `Response` types. Between them sits `promptMapping.ts`: pure functions that translate every persisted message into a prompt message before each turn, and every response part back into persisted messages after it.
+[efferent](https://github.com/xandreeddev/efferent) persists conversations as `AgentMessage` rows — a shape structurally mirroring the Vercel AI SDK's `ModelMessage`, kept stable so the database survives framework changes. The LLM layer, though, is `@effect/ai`, which speaks its own `Prompt` and `Response` types. Between them sits `promptMapping.ts`: pure functions that translate every persisted message into a prompt message before each turn, and every response part back into persisted messages after it.
 
 The mapping itself is exactly as boring as you'd hope:
 
@@ -57,7 +57,7 @@ export const toPromptMessages = (messages: ReadonlyArray<AgentMessage>) =>
   })
 ```
 
-Boring, but load-bearing in a way that's easy to miss: that `providerOptions` blob is *opaque provider state that must round-trip*. The sharpest example is Gemini's `thought_signature` — when thinking is enabled, Gemini attaches a signature to its output parts and expects to receive it back verbatim on later turns; lose it and multi-turn tool calling degrades. `@effect/ai` has a convenience helper that builds prompt messages from response parts, and it drops that metadata — which is precisely why [efferent](https://github.com/xandreeddev/agent) maps by hand and carries the blob through both directions: response part metadata → persisted `providerOptions` → prompt part `options`.
+Boring, but load-bearing in a way that's easy to miss: that `providerOptions` blob is *opaque provider state that must round-trip*. The sharpest example is Gemini's `thought_signature` — when thinking is enabled, Gemini attaches a signature to its output parts and expects to receive it back verbatim on later turns; lose it and multi-turn tool calling degrades. `@effect/ai` has a convenience helper that builds prompt messages from response parts, and it drops that metadata — which is precisely why [efferent](https://github.com/xandreeddev/efferent) maps by hand and carries the blob through both directions: response part metadata → persisted `providerOptions` → prompt part `options`.
 
 Now count the input space. Three message roles. Four content-part types. Each part optionally carrying `providerOptions`, which can be absent, a populated object, an *empty* object, or — because the schema says `Unknown` — anything at all. Parts compose into arrays of any length, messages into conversations of any length. The function has maybe forty lines, and the number of structurally distinct inputs is, for testing purposes, infinite.
 
@@ -94,7 +94,7 @@ That's the entire theory. The practice question is: where do good arbitraries co
 
 ## One source of truth: the schema that validates also generates
 
-[efferent](https://github.com/xandreeddev/agent)'s message type isn't a TypeScript interface — it's an Effect `Schema`, a runtime value that describes a data shape and can derive things from that description: a decoder, an encoder, a JSON-Schema, a TypeScript type. This is what messages actually are:
+[efferent](https://github.com/xandreeddev/efferent)'s message type isn't a TypeScript interface — it's an Effect `Schema`, a runtime value that describes a data shape and can derive things from that description: a decoder, an encoder, a JSON-Schema, a TypeScript type. This is what messages actually are:
 
 ```ts title="packages/core/src/entities/Conversation.ts"
 export const TextPart = Schema.Struct({
@@ -188,7 +188,7 @@ A fair question: why is this a field-by-field correspondence check rather than a
 
 ### Usage embedding: idempotent, and surgical about what it overwrites
 
-[efferent](https://github.com/xandreeddev/agent) persists each turn's token usage *inside* the first assistant message's `providerOptions`, under an `'efferent'` key — so cost data survives in the conversation row with no schema migration. That's a write into the exact blob that must otherwise round-trip untouched, which makes its contract worth stating precisely:
+[efferent](https://github.com/xandreeddev/efferent) persists each turn's token usage *inside* the first assistant message's `providerOptions`, under an `'efferent'` key — so cost data survives in the conversation row with no schema migration. That's a write into the exact blob that must otherwise round-trip untouched, which makes its contract worth stating precisely:
 
 ```ts title="packages/core/src/usecases/promptMapping.test.ts"
 const usageArb = fc.record({
@@ -235,7 +235,7 @@ That pair — careful write, exact read — is the entire persistence story for 
 
 ## Properties for compression plans
 
-The same commit property-tested a very different seam: **headroom**, the context-compression pass in [efferent](https://github.com/xandreeddev/agent) — its name and core idea borrowed from the [chopratejas/headroom](https://github.com/chopratejas/headroom) library (a post of its own). When a tool result is oversized, a planner splits it into a head to keep, a middle to drop, and a tail to keep. Compression is the canonical place where example tests give false confidence — every example you write is text you chose, and text you chose has friendly lengths and friendly characters:
+The same commit property-tested a very different seam: **headroom**, the context-compression pass in [efferent](https://github.com/xandreeddev/efferent) — its name and core idea borrowed from the [chopratejas/headroom](https://github.com/chopratejas/headroom) library (a post of its own). When a tool result is oversized, a planner splits it into a head to keep, a middle to drop, and a tail to keep. Compression is the canonical place where example tests give false confidence — every example you write is text you chose, and text you chose has friendly lengths and friendly characters:
 
 ```ts title="packages/core/src/usecases/headroom.test.ts"
 it('planClip fires iff oversized; the split is lossless; head/tail sizes exact', () => {
@@ -328,7 +328,7 @@ And one level above both sits the question neither can touch: "given this prompt
 
 Property tests are not free confidence, and the failure modes are worth knowing before the first one bites.
 
-**Underconstrained generators produce flaky-looking failures.** Run 312 fails, run 313 passes, and your CI looks haunted — when actually the generator's domain is wider than the function's, and run 312 happened to sample the gap. fast-check prints the seed and shrunken counterexample, so it's deterministic once caught, but the *judgment call* is yours: is the input the generator found one the function must handle, or one that can't occur? [efferent](https://github.com/xandreeddev/agent)'s suite hit exactly this on `extractUsage`'s totality property, and the resolution is in the repo, comment and all:
+**Underconstrained generators produce flaky-looking failures.** Run 312 fails, run 313 passes, and your CI looks haunted — when actually the generator's domain is wider than the function's, and run 312 happened to sample the gap. fast-check prints the seed and shrunken counterexample, so it's deterministic once caught, but the *judgment call* is yours: is the input the generator found one the function must handle, or one that can't occur? [efferent](https://github.com/xandreeddev/efferent)'s suite hit exactly this on `extractUsage`'s totality property, and the resolution is in the repo, comment and all:
 
 ```ts title="packages/core/src/usecases/promptMapping.test.ts"
 // Content elements are filtered non-nullish: the helpers read `p.type` on

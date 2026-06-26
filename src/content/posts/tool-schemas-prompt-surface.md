@@ -12,7 +12,7 @@ Somewhere in your agent's transcript there's a turn like this: the model rewrite
 
 But look at what the model actually had to work with. It never saw your handler. It never saw the careful path resolution, the write lock, the truncation logic, the tests. It saw a **name**, a **description**, and a **parameter schema** — a few hundred tokens of JSON — and then it acted, within seconds, without asking a single clarifying question. If it misused the tool, the first suspect isn't the reader. It's the only thing the reader read.
 
-That's the frame this post sells: **a tool's schema is prompt surface.** The description is API documentation; the parameter annotations are the only types the model perceives; the success shape is a promise about what comes back. Every word of it is prompt engineering, whether you wrote it like prompt engineering or not. The receipts come from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building, whose toolkit has absorbed a few months of models reading its docs badly — and whose schemas got better every time.
+That's the frame this post sells: **a tool's schema is prompt surface.** The description is API documentation; the parameter annotations are the only types the model perceives; the success shape is a promise about what comes back. Every word of it is prompt engineering, whether you wrote it like prompt engineering or not. The receipts come from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building, whose toolkit has absorbed a few months of models reading its docs badly — and whose schemas got better every time.
 
 ## The reader who never asks questions
 
@@ -34,7 +34,7 @@ That asymmetry is the whole discipline. Everything below is one rule applied rep
 
 ## One declaration, two artifacts
 
-[efferent](https://github.com/xandreeddev/agent) defines its tools with `@effect/ai`'s `Tool.make`, where the parameters, success shape, and failure shape are all Effect `Schema` values — runtime validators that carry static types. The detail that matters here: a `Schema` can carry **annotations**, free-form metadata attached to a type, and the `description` annotation flows straight through to the JSON Schema the provider receives. Here's the real `read_file`:
+[efferent](https://github.com/xandreeddev/efferent) defines its tools with `@effect/ai`'s `Tool.make`, where the parameters, success shape, and failure shape are all Effect `Schema` values — runtime validators that carry static types. The detail that matters here: a `Schema` can carry **annotations**, free-form metadata attached to a type, and the `description` annotation flows straight through to the JSON Schema the provider receives. Here's the real `read_file`:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 export const ReadFile = Tool.make('read_file', {
@@ -87,7 +87,7 @@ Read that JSON the way the model does. It answers, in order: *what does this do 
 
 ## Anatomy of a description that routes
 
-A tool description has two jobs, and most people only write the first: say what the tool does. The second job is **routing** — saying when to use it *and when to use its sibling instead* — because the model's real decision is rarely "can this tool do X" but "which of these twelve tools is right for X." [efferent](https://github.com/xandreeddev/agent)'s file-writing pair makes the routing explicit, in the description itself:
+A tool description has two jobs, and most people only write the first: say what the tool does. The second job is **routing** — saying when to use it *and when to use its sibling instead* — because the model's real decision is rarely "can this tool do X" but "which of these twelve tools is right for X." [efferent](https://github.com/xandreeddev/efferent)'s file-writing pair makes the routing explicit, in the description itself:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 export const WriteFile = Tool.make('write_file', {
@@ -135,7 +135,7 @@ Three moves in one annotation: examples of valid input (models pattern-match exa
 
 ## Names are load-bearing
 
-A tool's name looks like the one part of the schema with no semantics. It has two. The first is habit: a model has seen millions of transcripts of *some* tool names, and a name it recognizes comes with free training — [efferent](https://github.com/xandreeddev/agent) names its search tools `grep`, `glob`, and `ls` precisely because the model already knows what those words mean down to the flag conventions. The second is collision, and it's nastier, because the collision space isn't your codebase — it's the provider's. This comment sits on the shell tool, and I'd frame it if I could:
+A tool's name looks like the one part of the schema with no semantics. It has two. The first is habit: a model has seen millions of transcripts of *some* tool names, and a name it recognizes comes with free training — [efferent](https://github.com/xandreeddev/efferent) names its search tools `grep`, `glob`, and `ls` precisely because the model already knows what those words mean down to the flag conventions. The second is collision, and it's nastier, because the collision space isn't your codebase — it's the provider's. This comment sits on the shell tool, and I'd frame it if I could:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 // NB: named "Bash" — the capital B is LOAD-BEARING, don't lowercase it.
@@ -160,7 +160,7 @@ None of this is visible in any type signature. It's pure namespace politics betw
 
 ## Descriptions as policy
 
-Everything so far treats the description as documentation. The most interesting tool in [efferent](https://github.com/xandreeddev/agent) treats it as something stronger: **policy**. `run_agent` spawns a folder-scoped sub-agent with its own persisted context, and can also resume or branch a previous one — which means every call embeds a judgment call about context hygiene that models reliably get wrong on their own. The description is where that judgment got encoded:
+Everything so far treats the description as documentation. The most interesting tool in [efferent](https://github.com/xandreeddev/efferent) treats it as something stronger: **policy**. `run_agent` spawns a folder-scoped sub-agent with its own persisted context, and can also resume or branch a previous one — which means every call embeds a judgment call about context hygiene that models reliably get wrong on their own. The description is where that judgment got encoded:
 
 ```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
 const RunAgentTool = Tool.make('run_agent', {
@@ -206,13 +206,13 @@ There's a structural fact about `@effect/ai` that turns all this from style advi
  */
 ```
 
-A call with the right name but the wrong shape never reaches your code. No defensive `typeof` checks at the top of the handler, no half-validated arguments wandering into the filesystem layer — the schema you published is the schema that's enforced, mechanically, at the door. ([efferent](https://github.com/xandreeddev/agent) wraps the handler so the decode error comes back to the model as a structured failure it can correct, rather than a dead turn — but that recovery loop is a post of its own.)
+A call with the right name but the wrong shape never reaches your code. No defensive `typeof` checks at the top of the handler, no half-validated arguments wandering into the filesystem layer — the schema you published is the schema that's enforced, mechanically, at the door. ([efferent](https://github.com/xandreeddev/efferent) wraps the handler so the decode error comes back to the model as a structured failure it can correct, rather than a dead turn — but that recovery loop is a post of its own.)
 
 Sit with the implication, because it cuts both ways. Enforcement means your docs can't lie in the permissive direction — the model can't pass a string where you declared a number and have it "mostly work." But it also means your schema rejects everything you didn't think of, at the door, including calls that were *morally correct*. Which brings us to the most instructive function in the toolkit.
 
 ## Meeting the model where it is
 
-Models arrive pre-trained on other people's harnesses. A model that has spent its training life calling Claude Code's `Edit` tool — which takes a flat `old_string`/`new_string` pair — will, with measurable frequency, emit that flat shape at *your* edit tool, whatever your schema says. [efferent](https://github.com/xandreeddev/agent)'s `edit_file` canonically takes an `edits` array. The comment on the normalizer tells the story:
+Models arrive pre-trained on other people's harnesses. A model that has spent its training life calling Claude Code's `Edit` tool — which takes a flat `old_string`/`new_string` pair — will, with measurable frequency, emit that flat shape at *your* edit tool, whatever your schema says. [efferent](https://github.com/xandreeddev/efferent)'s `edit_file` canonically takes an `edits` array. The comment on the normalizer tells the story:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 /**
@@ -243,7 +243,7 @@ When do you accommodate a habit, and when do you correct it? The toolkit embodie
 
 ## The annotation budget
 
-All this generosity has a meter running. Tool definitions ship with **every request** — the toolkit's serialized JSON rides alongside the system prompt on every single turn, of every conversation, whether or not any tool gets called. Twelve tools' worth of descriptions, annotations, and schema structure is a standing tax measured in thousands of tokens. (Prompt caching makes the re-reads cheap on providers that support it — [efferent](https://github.com/xandreeddev/agent) pins tools and system prompt into the cached prefix, a post of its own — but cached tokens still occupy context, and context is the scarcer currency.)
+All this generosity has a meter running. Tool definitions ship with **every request** — the toolkit's serialized JSON rides alongside the system prompt on every single turn, of every conversation, whether or not any tool gets called. Twelve tools' worth of descriptions, annotations, and schema structure is a standing tax measured in thousands of tokens. (Prompt caching makes the re-reads cheap on providers that support it — [efferent](https://github.com/xandreeddev/efferent) pins tools and system prompt into the cached prefix, a post of its own — but cached tokens still occupy context, and context is the scarcer currency.)
 
 So the toolkit spends like someone who knows it's a budget. The spread is deliberate:
 
@@ -251,7 +251,7 @@ So the toolkit spends like someone who knows it's a budget. The spread is delibe
 - **Medium where there's one convention to pin.** `read_file` is two sentences plus three short annotations — the 1-indexing and path conventions are the only ambiguities worth money.
 - **Verbose where a wrong call is expensive and the decision is genuinely hard.** `run_agent`'s description runs ~150 words — by far the longest — because each call spins up an entire sub-agent loop with its own model spend, and the fresh-vs-resume decision has no training-data default to lean on. A wasted spawn costs five orders of magnitude more than its description does.
 
-The budget heuristic that falls out: **description length should be proportional to the cost of misuse times the ambiguity of the choice,** not to how proud you are of the feature. And some guidance doesn't belong in the schema at all — [efferent](https://github.com/xandreeddev/agent)'s system prompt carries the cross-tool workflow ("Prefer 'grep' for searching content and 'glob' for finding files by name. Reach for 'Bash' only when the other tools can't do the job"), because routing *between* tools is global behavior, while each description owns the contract of one call. Two surfaces, two altitudes, one budget.
+The budget heuristic that falls out: **description length should be proportional to the cost of misuse times the ambiguity of the choice,** not to how proud you are of the feature. And some guidance doesn't belong in the schema at all — [efferent](https://github.com/xandreeddev/efferent)'s system prompt carries the cross-tool workflow ("Prefer 'grep' for searching content and 'glob' for finding files by name. Reach for 'Bash' only when the other tools can't do the job"), because routing *between* tools is global behavior, while each description owns the contract of one call. Two surfaces, two altitudes, one budget.
 
 ## What this costs
 
@@ -263,7 +263,7 @@ Schema-as-prompt-surface has failure modes of its own, and they're worth naming 
 
 **Over-specification rejects legitimate calls.** The grep flags allowlist that closes the injection hole also rejects `--include=*.ts` — a completely reasonable thing for a model to want — because `=value` forms can't be distinguished from injection cheaply. Every constraint you add to a parameter is a bet that you've enumerated the legitimate uses. You haven't. The best you can do is make the rejection teach (the annotation and the failure message both say exactly what's allowed) and keep an escape hatch (`Bash` exists, behind approval).
 
-**Tuning is model-family-relative.** "Bash" with a capital B is the right name *because* the strongest current models trained on a harness that spells it that way. `normalizeEdits` accommodates Claude Code's edit shape specifically. A description calibrated against one family's instincts can mistune for another — and [efferent](https://github.com/xandreeddev/agent) routes across providers at runtime, so the same toolkit text serves models with different habits on different turns. There's no stable optimum here, only a moving average you re-check when the router's mix changes. Schema text that encodes today's models' habits is a depreciating asset; the comments saying *why* each word is there are what keep it maintainable.
+**Tuning is model-family-relative.** "Bash" with a capital B is the right name *because* the strongest current models trained on a harness that spells it that way. `normalizeEdits` accommodates Claude Code's edit shape specifically. A description calibrated against one family's instincts can mistune for another — and [efferent](https://github.com/xandreeddev/efferent) routes across providers at runtime, so the same toolkit text serves models with different habits on different turns. There's no stable optimum here, only a moving average you re-check when the router's mix changes. Schema text that encodes today's models' habits is a depreciating asset; the comments saying *why* each word is there are what keep it maintainable.
 
 ## Read your own wire format
 

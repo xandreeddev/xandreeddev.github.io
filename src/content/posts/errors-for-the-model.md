@@ -29,13 +29,13 @@ Error: EACCES: permission denied, open '/repo/packages/auth/login.ts'
 
 The first costs a turn. The model now guesses — `sudo`? `chmod`? retry and hope? Every guess is an LLM call you pay for and a fresh chance to make things worse. The second names what happened in a term the model can act on (*scope* — a concept its system prompt taught it) and ends with the move to make instead. One string wastes the turn; the other saves it.
 
-That's the thesis: **an agent's failure strings are load-bearing prompt engineering.** Each one should name what happened *and* the next move, because the reader will act on it within seconds. The rest of this post is receipts — the real model-facing failure strings from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building, quoted verbatim, each with the reasoning behind its wording.
+That's the thesis: **an agent's failure strings are load-bearing prompt engineering.** Each one should name what happened *and* the next move, because the reader will act on it within seconds. The rest of this post is receipts — the real model-facing failure strings from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building, quoted verbatim, each with the reasoning behind its wording.
 
 ## A failure is a tool result, not an exception
 
 First, the plumbing fact that makes any of this possible. An agent loop is a conversation: the model emits a *tool call* (a named function plus JSON arguments), the runtime executes it, and the outcome goes back into the transcript as a *tool result* — a message the model reads when the loop invokes it again. That is the only channel the model has eyes on. A failure that throws past it — an exception unwinding the stack, killing the turn — is, from the model's point of view, silence. For a failure to be read by the thing that caused it, it has to come back through the same slot as a success: as data in the transcript.
 
-`@effect/ai`, the LLM layer [efferent](https://github.com/xandreeddev/agent) is built on, makes that a declared property of each tool. A tool ships a `failure` schema next to its `success` schema, and `failureMode: 'return'` means a handler failure becomes the tool's *result* — flagged as an error, but an ordinary message the loop appends and keeps going past:
+`@effect/ai`, the LLM layer [efferent](https://github.com/xandreeddev/efferent) is built on, makes that a declared property of each tool. A tool ships a `failure` schema next to its `success` schema, and `failureMode: 'return'` means a handler failure becomes the tool's *result* — flagged as an error, but an ordinary message the loop appends and keeps going past:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 export const Failure = Schema.Struct({
@@ -64,7 +64,7 @@ Six strings from production. None is decoration; each earns its tokens by saving
 
 ### The schema miss
 
-The most common model-caused failure: right tool, wrong argument shape. In `@effect/ai`, a known tool's parameters are decoded against its schema *before* the handler runs — so `failureMode: 'return'`, which only catches handler failures, never sees a decode miss. Left alone, it surfaces as a `MalformedOutput` error that aborts the entire turn over a malformed JSON object. [efferent](https://github.com/xandreeddev/agent) wraps the toolkit's resolved handler to catch exactly that case and convert it into a tool result:
+The most common model-caused failure: right tool, wrong argument shape. In `@effect/ai`, a known tool's parameters are decoded against its schema *before* the handler runs — so `failureMode: 'return'`, which only catches handler failures, never sees a decode miss. Left alone, it surfaces as a `MalformedOutput` error that aborts the entire turn over a malformed JSON object. [efferent](https://github.com/xandreeddev/efferent) wraps the toolkit's resolved handler to catch exactly that case and convert it into a tool result:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
 const handle = (name: unknown, params: unknown) =>
@@ -114,7 +114,7 @@ The load-bearing clause is the roster. A hallucinated tool name isn't random noi
 
 ### The denial
 
-When [efferent](https://github.com/xandreeddev/agent) wants to run a shell command in an interactive session, a human approves or denies it (an LLM judge pre-screens the obviously-fine ones — a post of its own). The naive encoding of "deny" is an exception: permission denied, turn over. But the human pressed deny *for a reason*, and the model is about to choose its next action without knowing it. So a denial is a returned failure that carries the human's intent forward:
+When [efferent](https://github.com/xandreeddev/efferent) wants to run a shell command in an interactive session, a human approves or denies it (an LLM judge pre-screens the obviously-fine ones — a post of its own). The naive encoding of "deny" is an exception: permission denied, turn over. But the human pressed deny *for a reason*, and the model is about to choose its next action without knowing it. So a denial is a returned failure that carries the human's intent forward:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 const decision = yield* approval.request({
@@ -138,7 +138,7 @@ This is the gallery's only string co-authored at runtime by a human. The reason 
 
 ### The budget
 
-[efferent](https://github.com/xandreeddev/agent)'s sub-agents — child agent loops spawned to work on a folder — all draw from one shared token pool per top-level turn, the *token budget*: depth and step caps bound termination, the pool bounds spend. When it drains, two strings do the strategy work, and they sit side by side in the same file:
+[efferent](https://github.com/xandreeddev/efferent)'s sub-agents — child agent loops spawned to work on a folder — all draw from one shared token pool per top-level turn, the *token budget*: depth and step caps bound termination, the pool bounds spend. When it drains, two strings do the strategy work, and they sit side by side in the same file:
 
 ```ts title="packages/core/src/usecases/tokenBudget.ts"
 /** The model-facing failure for a spawn attempted on a drained pool. */
@@ -203,7 +203,7 @@ Three things are deliberate. It sizes the hole — *~5800 tokens* — so the mod
 
 ### The staleness brief
 
-The last entry is for a failure that hasn't happened yet. [efferent](https://github.com/xandreeddev/agent) keeps every sub-agent's transcript as a resumable node in a persistent tree (a post of its own), which creates a subtle hazard: a node's context is a cache of a world-model whose backing store — the repo — keeps changing. A node that read files two commits ago and is resumed today will confidently act on its in-context copies, because models trust context over re-reading; to the model, the in-context file *is* the file. So nodes are stamped with the workspace's git HEAD when their run finishes, and resuming against a moved HEAD prepends a brief to the task:
+The last entry is for a failure that hasn't happened yet. [efferent](https://github.com/xandreeddev/efferent) keeps every sub-agent's transcript as a resumable node in a persistent tree (a post of its own), which creates a subtle hazard: a node's context is a cache of a world-model whose backing store — the repo — keeps changing. A node that read files two commits ago and is resumed today will confidently act on its in-context copies, because models trust context over re-reading; to the model, the in-context file *is* the file. So nodes are stamped with the workspace's git HEAD when their run finishes, and resuming against a moved HEAD prepends a brief to the task:
 
 ```ts title="packages/core/src/usecases/staleness.ts"
 export const stalenessNote = (args: {
@@ -249,7 +249,7 @@ Three honest costs.
 
 **Strings drift from behavior unless tested.** *"re-run the tool narrower — read_file with offset/limit"* is true exactly as long as `read_file` has `offset` and `limit`. Rename a tool, drop a parameter, and the string lies — and nothing will tell you, because prose doesn't typecheck. Of everything quoted in this post, only the handoff brief's behavior is currently guarded by an eval (a scorer asserts it's a summary, not a chat reply); the rest are tested the way comments are: by hoping. The honest fix is evals that induce each failure and assert on the transcript that follows — cheap to write, just not yet written.
 
-**Too-helpful errors teach leaning on recovery.** If every malformed call earns a patient corrective, sloppy calls are cheap — and not just across training runs; *in context*, a transcript full of graceful recoveries teaches this model, right now, that schema discipline is optional. There's also accommodation creep: [efferent](https://github.com/xandreeddev/agent)'s `edit_file` eventually stopped correcting one wrong shape and started *accepting* it — models trained on another harness's edit tool kept emitting a flat `oldText`/`newText` instead of the documented `edits` array, so the decoder now takes both. Probably the right call. But every such acceptance deletes the failure signal that told you what models actually get wrong, and you can only read the signals you still emit.
+**Too-helpful errors teach leaning on recovery.** If every malformed call earns a patient corrective, sloppy calls are cheap — and not just across training runs; *in context*, a transcript full of graceful recoveries teaches this model, right now, that schema discipline is optional. There's also accommodation creep: [efferent](https://github.com/xandreeddev/efferent)'s `edit_file` eventually stopped correcting one wrong shape and started *accepting* it — models trained on another harness's edit tool kept emitting a flat `oldText`/`newText` instead of the documented `edits` array, so the decoder now takes both. Probably the right call. But every such acceptance deletes the failure signal that told you what models actually get wrong, and you can only read the signals you still emit.
 
 ## The user changed
 

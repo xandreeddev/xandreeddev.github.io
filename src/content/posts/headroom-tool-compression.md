@@ -20,7 +20,7 @@ const prompt = [system, ...messages] // the 80k rides along, every single time
 
 At the usual rough exchange rate of ~4 characters per token, that one grep is ~20,000 tokens — a tenth of a 200k context window, billed as input again on every turn that follows. Twenty more turns means that single tool call costs roughly twenty times what it looks like it costs.
 
-This post is about cache-safe tool-output compression: clipping an agent's oversized tool results under two non-negotiable constraints — don't break the provider's prompt cache, and don't break the model's ability to get the data back. I didn't invent the approach. I took the core idea — and the name — from [chopratejas/headroom](https://github.com/chopratejas/headroom), a Python proxy whose *dependency* doesn't port to a TypeScript/Bun agent but whose *ideas* do. What follows is the version I rebuilt around those ideas inside [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect — where the module still carries the **headroom** name in tribute — with receipts.
+This post is about cache-safe tool-output compression: clipping an agent's oversized tool results under two non-negotiable constraints — don't break the provider's prompt cache, and don't break the model's ability to get the data back. I didn't invent the approach. I took the core idea — and the name — from [chopratejas/headroom](https://github.com/chopratejas/headroom), a Python proxy whose *dependency* doesn't port to a TypeScript/Bun agent but whose *ideas* do. What follows is the version I rebuilt around those ideas inside [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect — where the module still carries the **headroom** name in tribute — with receipts.
 
 ## Three obvious fixes, three ways to lose
 
@@ -30,7 +30,7 @@ Before the design, the failure modes it's built against. Everyone's first three 
 
 **Summarize in place, later.** Let the conversation grow; when it gets fat, walk back through history and replace old tool outputs with summaries. This is the intuitive one, and it has a brutal hidden cost: it **rewrites history**, and history is what the provider's prompt cache is keyed on.
 
-That deserves its one paragraph. Every major provider caches the prompt **prefix**: if the first N bytes of your request exactly match a previous request, those bytes are served from cache at a steep discount instead of being re-processed at full price. The operative word is *exactly* — the prefix must be **byte-stable**. Edit message 12 of a 40-message conversation and every byte from message 12 onward misses the cache; the next request re-bills the bulk of the conversation at the full input rate. The per-provider mechanics (and where [efferent](https://github.com/xandreeddev/agent) stamps its cache breakpoints) are a post of its own; the only fact headroom needs is this: **a conversation prefix, once sent, is either byte-stable or expensive.** Retroactive summarization converts a token-saving idea into a cache-invalidation machine.
+That deserves its one paragraph. Every major provider caches the prompt **prefix**: if the first N bytes of your request exactly match a previous request, those bytes are served from cache at a steep discount instead of being re-processed at full price. The operative word is *exactly* — the prefix must be **byte-stable**. Edit message 12 of a 40-message conversation and every byte from message 12 onward misses the cache; the next request re-bills the bulk of the conversation at the full input rate. The per-provider mechanics (and where [efferent](https://github.com/xandreeddev/efferent) stamps its cache breakpoints) are a post of its own; the only fact headroom needs is this: **a conversation prefix, once sent, is either byte-stable or expensive.** Retroactive summarization converts a token-saving idea into a cache-invalidation machine.
 
 **Raise the budget.** Use a bigger window, or just tolerate the bloat. But the re-billing arithmetic doesn't care how big the window is — you pay for the dead weight on every turn until the session ends. And a window that fills faster is a session that ends sooner: the dead weight drags you toward whatever ceiling forces a context reset, while the model gets measurably worse at finding the needle as the haystack grows.
 
@@ -44,7 +44,7 @@ There is exactly one moment in a tool output's life when it is *not yet history*
 - Every **future prompt** carries the compressed form from byte one. The prefix never changes after the fact, so the cache never notices anything happened — there is nothing to notice.
 - The cost is paid **once**, at the moment the data is freshest, instead of deferred to a cleanup pass that has to guess what mattered.
 
-That ordering insight is the entire architecture. Everything else in this post is mechanics hanging off of it. Here is where it lives in [efferent](https://github.com/xandreeddev/agent)'s agent loop — the model has just responded, possibly with tool results attached:
+That ordering insight is the entire architecture. Everything else in this post is mechanics hanging off of it. Here is where it lives in [efferent](https://github.com/xandreeddev/efferent)'s agent loop — the model has just responded, possibly with tool results attached:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
 const rawTail = responseToAgentMessages(res.content)
@@ -235,7 +235,7 @@ Two more moves earn their keep. Identical warnings dedup to one occurrence annot
 
 The marker tells the model how much it's missing and how to retrieve it. When the dropped middle is large, headroom goes one step further and tells it *what* it's missing — by paying a much cheaper model to read the discard pile.
 
-[efferent](https://github.com/xandreeddev/agent) runs all agentic work on one main model, but keeps a **fast** role — a cheap, low-latency model slot — for one-shot helper calls inside a running turn (the multi-provider routing underneath is a post of its own). Headroom is that tier's flagship customer:
+[efferent](https://github.com/xandreeddev/efferent) runs all agentic work on one main model, but keeps a **fast** role — a cheap, low-latency model slot — for one-shot helper calls inside a running turn (the multi-provider routing underneath is a post of its own). Headroom is that tier's flagship customer:
 
 ```ts title="packages/core/src/usecases/headroom.ts"
 /** Dropped middles smaller than this aren't worth a fast-model summary. */
@@ -292,7 +292,7 @@ export const truncateOutput = (s: string, max: number): string => {
 
 That comment records a real lesson: an earlier head-only cap was destroying the exact summary lines the log planner downstream is built to preserve. The tiers have to agree on where signal lives, or the lower one starves the upper one. Tools with natural paging — `read_file`, `web_fetch` — carry their own caps and report `truncated: true`; headroom is the **generic backstop** for everything without one: bash stdout, grep floods, whatever tool gets added next year by someone who never read this post.
 
-Above headroom sits the question of **sub-agents**. [efferent](https://github.com/xandreeddev/agent) fans work out to child agents, each running the same loop with its own conversation — and a sub-agent that doesn't compress would ship its bloat right back to the parent as a tool result. The budget therefore travels with the run, not the wiring: it rides a `FiberRef` — Effect's typed, fiber-scoped take on ambient context, inherited by every child fiber — so every loop in the tree compresses like the root without a parameter threaded through forty signatures:
+Above headroom sits the question of **sub-agents**. [efferent](https://github.com/xandreeddev/efferent) fans work out to child agents, each running the same loop with its own conversation — and a sub-agent that doesn't compress would ship its bloat right back to the parent as a tool result. The budget therefore travels with the run, not the wiring: it rides a `FiberRef` — Effect's typed, fiber-scoped take on ambient context, inherited by every child fiber — so every loop in the tree compresses like the root without a parameter threaded through forty signatures:
 
 ```ts title="packages/core/src/usecases/runContext.ts"
 export interface RunContext {

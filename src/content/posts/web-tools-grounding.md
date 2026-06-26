@@ -8,7 +8,7 @@ draft: true
 
 Every agent tutorial reaches the same chapter: giving the model the web. And the recipe is weirdly uniform — sign up for a search API (Brave, SerpAPI, Tavily; Bing, until Microsoft retired its search API out from under everyone in 2025), wire the key into yet another env var, then bolt on a headless browser to scrape the result pages, because ten blue links are useless without their contents. Two new vendors, a Chromium fleet, and a scraping stack to maintain — for an agent that mostly wants to check what version of a library exists and then read one docs page.
 
-[efferent](https://github.com/xandreeddev/agent), the coding agent I'm building, ships both web tools and asks for none of that. The README line is this post's thesis: **"Web tools, no extra key."** Search rides the LLM credential you already have, because search is a capability your model provider already sells you. Fetching is plain HTTP plus an honest HTML-to-text pass — about a dozen lines of regex, not a browser. This post is the argument for why that's the right *default*, and it ends by being precise about where the default stops being enough.
+[efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building, ships both web tools and asks for none of that. The README line is this post's thesis: **"Web tools, no extra key."** Search rides the LLM credential you already have, because search is a capability your model provider already sells you. Fetching is plain HTTP plus an honest HTML-to-text pass — about a dozen lines of regex, not a browser. This post is the argument for why that's the right *default*, and it ends by being precise about where the default stops being enough.
 
 ## Two needs, not one
 
@@ -26,7 +26,7 @@ search_web({ query })  // discovery: a synthesized answer + source URLs
 web_fetch({ url })     // reading: ONE page, reduced to readable text
 ```
 
-Those are the two web tools in [efferent](https://github.com/xandreeddev/agent)'s toolkit, and the rest of this post is one section per tool — plus the choreography between them.
+Those are the two web tools in [efferent](https://github.com/xandreeddev/efferent)'s toolkit, and the rest of this post is one section per tool — plus the choreography between them.
 
 ## Discovery: search is a capability you already pay for
 
@@ -52,7 +52,7 @@ The economic framing is the part I want to sell hardest. A Brave or SerpAPI subs
 
 ## One port, grounding-only by design
 
-Here's how [efferent](https://github.com/xandreeddev/agent) wraps that capability. In its architecture, every external capability is a *port* — an interface declared in the core package with no implementation attached — and web search is one of the smallest:
+Here's how [efferent](https://github.com/xandreeddev/efferent) wraps that capability. In its architecture, every external capability is a *port* — an interface declared in the core package with no implementation attached — and web search is one of the smallest:
 
 ```ts title="packages/core/src/ports/WebSearch.ts"
 export class WebSearchError extends Data.TaggedError('WebSearchError')<{
@@ -221,7 +221,7 @@ The honest section. Choosing grounding plus plain HTTP is choosing a set of limi
 
 **Citations can be partial.** The `sources` array is what the provider chose to attach, not a complete bibliography. Sometimes a claim in the answer has no corresponding source; sometimes a source has an empty title (the adapter falls back to showing the URL). The two-step mitigates this — anything that matters gets fetched and verified — but if you need auditable provenance for every sentence, grounding alone doesn't provide it.
 
-**Coverage is your login.** "No extra key" really means "the keys you have, doubled as search keys." [efferent](https://github.com/xandreeddev/agent) can ground against Google or OpenAI; if you're logged into neither — say you run Anthropic-only — `search_web` fails with a clear returned error and the agent works webless. (On the OpenAI side it specifically needs an API key; a subscription login doesn't carry search.) The capability is real but conditional on your provider mix, which a dedicated search vendor's key never is.
+**Coverage is your login.** "No extra key" really means "the keys you have, doubled as search keys." [efferent](https://github.com/xandreeddev/efferent) can ground against Google or OpenAI; if you're logged into neither — say you run Anthropic-only — `search_web` fails with a clear returned error and the agent works webless. (On the OpenAI side it specifically needs an API key; a subscription login doesn't carry search.) The capability is real but conditional on your provider mix, which a dedicated search vendor's key never is.
 
 **Fetch can't run JavaScript.** `web_fetch` reads what the server sends. A docs site that server-renders — which is most of them, and essentially all of the ones worth reading — comes through fine. A client-rendered SPA comes back as a `<div id="root">` and a script tag: thin to the point of useless. No PDFs either, no pagination, no auth walls, and the regex reducer flattens tables into word soup.
 

@@ -13,7 +13,7 @@ The first post in this series argued that in Effect, spans, metrics, and logs ar
 
 An agent is an unusually good thing to trace and an unusually bad thing to `console.log`. It's a loop: the model proposes tool calls, you run them, you feed the results back, it proposes more, until it stops. One user prompt becomes a tree — turns inside a run, model calls and tool calls inside a turn, sometimes whole sub-agents inside a tool call. The interesting failures are *relational*: this turn was slow because that tool call hung; this run cost $2 because turn four re-read a 40k-line file the model already had. A flat log stream flattens exactly the structure you need. A trace *is* the structure.
 
-So you trace the tree. And the first real decision — the one this whole post turns on — is the difference between what you name a span and what you put *on* it. Everything below is real code from [efferent](https://github.com/xandreeddev/agent), the coding agent I build on Effect.
+So you trace the tree. And the first real decision — the one this whole post turns on — is the difference between what you name a span and what you put *on* it. Everything below is real code from [efferent](https://github.com/xandreeddev/efferent), the coding agent I build on Effect.
 
 ## The tree, and the names humans read
 

@@ -10,7 +10,7 @@ Every TypeScript project carries a shadow program: the pipeline that turns the c
 
 What's left is the part you actually wanted all along — the type *checker* — reassigned from code generator to gate. `tsc --noEmit` doesn't produce anything; it verifies, exactly like a linter or a test suite, and execution never waits for it.
 
-This post walks that model end to end: what the build step historically bought, what running the source actually means, what it does to a monorepo, and how you still publish to npm at the end. The receipts come from [efferent](https://github.com/xandreeddev/agent), a coding agent CLI built on Effect and Bun — four workspace packages, a terminal UI with a native renderer, SQL migrations, an npm package with a `bin` — every awkward thing that supposedly forces a build pipeline, shipping without one.
+This post walks that model end to end: what the build step historically bought, what running the source actually means, what it does to a monorepo, and how you still publish to npm at the end. The receipts come from [efferent](https://github.com/xandreeddev/efferent), a coding agent CLI built on Effect and Bun — four workspace packages, a terminal UI with a native renderer, SQL migrations, an npm package with a `bin` — every awkward thing that supposedly forces a build pipeline, shipping without one.
 
 ## What the build step bought — and what it bills
 
@@ -41,7 +41,7 @@ Each cost compensates for a single upstream decision: *the code that runs is not
 
 Bun's runtime embeds a transpiler — the component that rewrites TypeScript syntax into JavaScript — directly in the module loader. When an import resolves to a `.ts` file, the types are stripped in memory, on load, and nothing is written to disk. There is no artifact because there is no output. "Compile" stops being a phase of your project and becomes an implementation detail of `import`, the same way you don't think about JavaScript being parsed.
 
-Here's what a project looks like when that's true. The root scripts of [efferent](https://github.com/xandreeddev/agent), in full:
+Here's what a project looks like when that's true. The root scripts of [efferent](https://github.com/xandreeddev/efferent), in full:
 
 ```json title="package.json" {3}
 {
@@ -100,7 +100,7 @@ So where did the compiler go? Into the gate. Here's the shared compiler configur
 
 The two flags worth a second look are `isolatedModules` and `verbatimModuleSyntax`. Together they enforce that every file can be transpiled *alone*, with no knowledge of any other file — type imports must be marked `import type`, no cross-file `const enum` inlining, nothing whose erasure requires whole-program analysis. That's not stylistic preference; it's the contract the entire model rests on. A per-file load-time transpiler can only be correct for code where erasure is per-file. These flags make the compiler reject anything outside that subset, which means the gate is also guarding the assumption the runtime depends on.
 
-Where does the gate actually run? In [efferent](https://github.com/xandreeddev/agent) it's the first of two commands the README names "the correctness gates":
+Where does the gate actually run? In [efferent](https://github.com/xandreeddev/efferent) it's the first of two commands the README names "the correctness gates":
 
 ```bash
 bun run typecheck && bun test   # the correctness gates (no build step for dev)
@@ -114,7 +114,7 @@ One consequence of the decoupling deserves to be said plainly: **code that fails
 
 If you've run a multi-package TypeScript repo the traditional way, you know the project-references dance. **Project references** are `tsc`'s mechanism for splitting a codebase into separately compiled units: each package gets `composite: true`, emits declaration files, declares which other packages it references, and `tsc --build` walks the graph in dependency order. It works. It is also a second dependency graph you maintain by hand, a build-order constraint solver in your editor, and a steady tax of "why is this package seeing stale types" — answered, always, by rebuilding.
 
-With no emit anywhere, a workspace package stops being a compilation unit and becomes *a name for a folder of source*. Here is the entire interface of [efferent](https://github.com/xandreeddev/agent)'s core domain package:
+With no emit anywhere, a workspace package stops being a compilation unit and becomes *a name for a folder of source*. Here is the entire interface of [efferent](https://github.com/xandreeddev/efferent)'s core domain package:
 
 ```json title="packages/core/package.json" {6,7}
 {
@@ -195,11 +195,11 @@ Why two holes? Because both sit on the one boundary a JavaScript bundler genuine
 
 **`web-tree-sitter`** is the subtler case: it isn't in the `external` list *at all*, because no source file in the repo imports it — search the codebase and you'll find only type-level mentions. The TUI's syntax highlighting asks `@opentui/core` for its tree-sitter client, which spawns a parser **worker** that loads `web-tree-sitter` and its grammar `.wasm` files from disk, resolved from the package's install directory. The bundler never sees any of that in the import graph; there's nothing to inline and nothing to externalize. The package appears in `dependencies` — pinned to the exact version the worker expects — purely so `npm install` materializes it on disk where the runtime resolution will find it.
 
-There's a transferable rule hiding in those two cases: **a bundle's boundary is wherever resolution leaves JavaScript** — native libraries reached by `dlopen`, WASM reached by path, workers spawned by filename. Inline everything up to that line; declare everything past it. [efferent](https://github.com/xandreeddev/agent)'s README states the result as a sentence — "a Bun bundle with two runtime dependencies; everything else is inlined" — and the sentence is auditable from the build script.
+There's a transferable rule hiding in those two cases: **a bundle's boundary is wherever resolution leaves JavaScript** — native libraries reached by `dlopen`, WASM reached by path, workers spawned by filename. Inline everything up to that line; declare everything past it. [efferent](https://github.com/xandreeddev/efferent)'s README states the result as a sentence — "a Bun bundle with two runtime dependencies; everything else is inlined" — and the sentence is auditable from the build script.
 
 ## The inner loop, in the agent era
 
-One more pressure makes this model timely rather than just tidy. A coding agent iterating on a codebase lives inside the edit → run → verify loop thousands of times a session, and every second of build latency lands in the middle of it — multiplied. With no build phase, the loop an agent runs against [efferent](https://github.com/xandreeddev/agent)'s own source is: edit the file, run the file, then `bun run typecheck && bun test` as the verdict (the test suite is 440+ colocated `bun test` files, property-based tests included — their design is a post of its own).
+One more pressure makes this model timely rather than just tidy. A coding agent iterating on a codebase lives inside the edit → run → verify loop thousands of times a session, and every second of build latency lands in the middle of it — multiplied. With no build phase, the loop an agent runs against [efferent](https://github.com/xandreeddev/efferent)'s own source is: edit the file, run the file, then `bun run typecheck && bun test` as the verdict (the test suite is 440+ colocated `bun test` files, property-based tests included — their design is a post of its own).
 
 The subtler win is what *can't* happen. The stale-dist bug is uniquely vicious for an agent: it edits the source, observes unchanged behavior from an artifact that wasn't rebuilt, concludes the edit was wrong, and "fixes" correct code — a confusion loop a human escapes by remembering the build exists, which is exactly the kind of out-of-band knowledge agents lack. A world where the source *is* the program removes the trap structurally. The type gate plays the same role for the agent as for CI: a cheap, total verdict it can converge against before any human looks at the diff.
 
@@ -207,7 +207,7 @@ The subtler win is what *can't* happen. The stale-dist bug is uniquely vicious f
 
 The honest ledger, because there is one.
 
-**Bun is a hard requirement for your users, not just for you.** `npm i -g efferent` succeeds on a machine with no Bun installed — npm doesn't act on an `engines.bun` field; it's documentation — and then the first run dies at the shebang with `env: 'bun': No such file or directory`. The README leads with "requires Bun" for exactly this reason. For a developer-tool audience the ask is small, but it's real: you're shipping to the subset of users willing to have a second runtime. And note this isn't a tax you could trivially refund later — [efferent](https://github.com/xandreeddev/agent) uses `bun:sqlite` through `@effect/sql-sqlite-bun` and boots with `BunRuntime`; the runtime choice is load-bearing in the code, not a compile flag away from Node compatibility.
+**Bun is a hard requirement for your users, not just for you.** `npm i -g efferent` succeeds on a machine with no Bun installed — npm doesn't act on an `engines.bun` field; it's documentation — and then the first run dies at the shebang with `env: 'bun': No such file or directory`. The README leads with "requires Bun" for exactly this reason. For a developer-tool audience the ask is small, but it's real: you're shipping to the subset of users willing to have a second runtime. And note this isn't a tax you could trivially refund later — [efferent](https://github.com/xandreeddev/efferent) uses `bun:sqlite` through `@effect/sql-sqlite-bun` and boots with `BunRuntime`; the runtime choice is load-bearing in the code, not a compile flag away from Node compatibility.
 
 **You live in the erasable subset — by discipline, not by force.** Bun's transpiler actually handles full TypeScript, enums included; it transforms rather than merely strips. But the model is only airtight inside the subset where erasure is per-file, and the place that breaks isn't Bun — it's the ecosystem of TypeScript features whose semantics historically came from `tsc`'s *emit*: cross-file `const enum` inlining, `emitDecoratorMetadata` feeding runtime reflection. The repo holds the line structurally — `isolatedModules` and `verbatimModuleSyntax` in the config, zero enums and zero decorators in the source. If your codebase leans on decorator metadata the way NestJS or TypeORM idioms do, this model is not for you without a migration first.
 
@@ -221,4 +221,4 @@ The honest ledger, because there is one.
 
 Here's the lens this whole setup left me with. Every stage in a pipeline does one of two things: it **verifies** (types, tests, lint) or it **produces** (transpile, bundle, emit). The historical sin of the TypeScript build step was fusing them — you couldn't get the verification without paying for the production, on every save, in the middle of your tightest loop. Bun unfuses them. Verification becomes a gate you run when a verdict matters; production becomes a packaging concern that fires once, at the boundary, ninety seconds before the tarball.
 
-So my default has inverted, and I'd argue yours should too: a new TypeScript CLI in 2026 starts with no build step, and every piece of production machinery has to argue its way back in. In [efferent](https://github.com/xandreeddev/agent), exactly two things made the case — one Solid JSX transform and one publish-time bundle — and both had to show receipts. Everything else is just the file you wrote, running.
+So my default has inverted, and I'd argue yours should too: a new TypeScript CLI in 2026 starts with no build step, and every piece of production machinery has to argue its way back in. In [efferent](https://github.com/xandreeddev/efferent), exactly two things made the case — one Solid JSX transform and one publish-time bundle — and both had to show receipts. Everything else is just the file you wrote, running.

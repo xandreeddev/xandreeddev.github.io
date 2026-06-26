@@ -15,7 +15,7 @@ Pipe a prompt into it from a shell script. Run it in CI. Drive it from an editor
 
 The alternative is to treat the agent as a **protocol**: the loop's only output is a typed stream of events, and every interface — terminal UI, one-shot print, JSON lines, JSON-RPC — is a small program that consumes that stream and renders it somehow. New consumer, new renderer, loop untouched.
 
-This post is the case for that inversion, with receipts from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect. Its terminal UI is the client with all the screenshots. It is also, architecturally, just client number one of four.
+This post is the case for that inversion, with receipts from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect. Its terminal UI is the client with all the screenshots. It is also, architecturally, just client number one of four.
 
 ## The trap: the UI leaks into the loop
 
@@ -49,7 +49,7 @@ Call the property we lost **headless**: the ability to run with no human and no 
 
 ## The inversion: the events are the product
 
-In [efferent](https://github.com/xandreeddev/agent), the agent loop's entire observable output is a value of one union type. This file is the contract every interface is built against — worth reading in full, because everything else in this post is a consumer of it:
+In [efferent](https://github.com/xandreeddev/efferent), the agent loop's entire observable output is a value of one union type. This file is the contract every interface is built against — worth reading in full, because everything else in this post is a consumer of it:
 
 ```ts title="packages/cli/src/events.ts"
 export type AgentEvent = // [!code highlight]
@@ -146,7 +146,7 @@ A queue is the right seam because the producer and the consumer are different co
 
 ### The flush sentinel, or: how a one-shot mode knows it's done
 
-Decoupling creates one genuinely subtle problem, and [efferent](https://github.com/xandreeddev/agent) solves it with the union's odd member out: `flush`.
+Decoupling creates one genuinely subtle problem, and [efferent](https://github.com/xandreeddev/efferent) solves it with the union's odd member out: `flush`.
 
 A one-shot mode runs the agent, renders the events, prints a result, and exits. But "the run completed" and "every event has been rendered" are two different moments — when `runAgent` returns, the last few events may still be sitting in the queue with the consumer fiber mid-drain. Exit now and you truncate output. The folk fixes are all bad: `sleep(50)` is the same race wearing a blindfold; interrupting the consumer can kill it halfway through writing a line.
 
@@ -239,7 +239,7 @@ This is the mode for everything that wants to *measure* an agent rather than wat
 
 The first three clients share a shape: one prompt in, one run out. The fourth inverts who's in charge. `efferent --mode rpc` starts the agent as a long-lived process that another *program* drives over stdio — an editor plugin, an orchestrator fanning work across repos, another agent.
 
-The protocol is JSON-RPC 2.0 — the boring, twenty-year-old convention where a **request** carries an `id` and gets exactly one **response** with the same `id`, and a **notification** carries no `id` and expects no reply. [efferent](https://github.com/xandreeddev/agent) frames it as one JSON object per line (newline-delimited, not the `Content-Length` headers LSP uses). There is one method — `agent.send`, taking `{ prompt, conversationId?, cwd?, allowBash? }` — and one notification, `agent.event`, which wraps each `AgentEvent` as it happens. A session, from the driving program's perspective:
+The protocol is JSON-RPC 2.0 — the boring, twenty-year-old convention where a **request** carries an `id` and gets exactly one **response** with the same `id`, and a **notification** carries no `id` and expects no reply. [efferent](https://github.com/xandreeddev/efferent) frames it as one JSON object per line (newline-delimited, not the `Content-Length` headers LSP uses). There is one method — `agent.send`, taking `{ prompt, conversationId?, cwd?, allowBash? }` — and one notification, `agent.event`, which wraps each `AgentEvent` as it happens. A session, from the driving program's perspective:
 
 ```
 → {"jsonrpc":"2.0","id":1,"method":"agent.send","params":{"prompt":"add a --version flag","allowBash":true}}
@@ -255,7 +255,7 @@ The details that make it drivable in practice: the result's `conversationId` fee
 
 ## History without a UI: `--resume`
 
-Conversations in [efferent](https://github.com/xandreeddev/agent) persist to SQLite at `~/.efferent/efferent.db` no matter which mode wrote them, because persistence is a port of the core — a `ConversationStore` the loop appends to — not a feature of any client. The corollary is that **session continuity and the TUI are fully decoupled**:
+Conversations in [efferent](https://github.com/xandreeddev/efferent) persist to SQLite at `~/.efferent/efferent.db` no matter which mode wrote them, because persistence is a port of the core — a `ConversationStore` the loop appends to — not a feature of any client. The corollary is that **session continuity and the TUI are fully decoupled**:
 
 ```bash
 efferent --resume 0b6e3a52-7c41-4d2e-9f0a-b3d1c5e8a2f4 \
@@ -327,4 +327,4 @@ Honesty section. Three real costs, none of them dealbreakers, all of them perman
 
 The conclusion I keep arriving at from different directions: **the most important user of your agent is not a person, and the interface you're proudest of is the one you should trust least to drive the architecture.** A TUI seduces you into terminal assumptions precisely because it's where you live all day. But look at where agents actually run as they become infrastructure — CI jobs, cron, editor backends, other agents' tool calls — and almost none of those seats have a human in them.
 
-So invert the build order. Define the event vocabulary first, make the loop emit it blindly, and write your beloved interactive client as *a* fold — the first, not the foundation. Everything in this post followed from that ordering: print mode is a fold that drops events, JSON mode is a fold that serializes them, RPC is a fold that envelopes them, and the TUI is a fold with very good taste. One hundred and seventy-three lines of contract, four clients, and the certainty that client five — whatever drives [efferent](https://github.com/xandreeddev/agent) next year — is a new file, not a rewrite. The TUI is the demo. The protocol is the product.
+So invert the build order. Define the event vocabulary first, make the loop emit it blindly, and write your beloved interactive client as *a* fold — the first, not the foundation. Everything in this post followed from that ordering: print mode is a fold that drops events, JSON mode is a fold that serializes them, RPC is a fold that envelopes them, and the TUI is a fold with very good taste. One hundred and seventy-three lines of contract, four clients, and the certainty that client five — whatever drives [efferent](https://github.com/xandreeddev/efferent) next year — is a new file, not a rewrite. The TUI is the demo. The protocol is the product.

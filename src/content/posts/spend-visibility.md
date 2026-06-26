@@ -17,7 +17,7 @@ The position of this post is that **spend is a first-class UI concern**, and tha
 - **attributed** twice — per model *role* and per *agent*
 - **shown** where decisions are made, not on a billing page
 
-Every receipt below is from [efferent](https://github.com/xandreeddev/agent), a coding agent I'm building in the open — sub-agents, helper tiers, multi-provider, all the multipliers — which makes it a decent stress test for the claim. But the claim is general: an agent that hides its spend feels expensive and untrustworthy; one that shows it teaches its user to drive it well.
+Every receipt below is from [efferent](https://github.com/xandreeddev/efferent), a coding agent I'm building in the open — sub-agents, helper tiers, multi-provider, all the multipliers — which makes it a decent stress test for the claim. But the claim is general: an agent that hides its spend feels expensive and untrustworthy; one that shows it teaches its user to drive it well.
 
 One unit definition before the code, because everything is denominated in it. A **token** is the provider's metering unit — roughly four characters of English text. You pay for every token you send (**input**: the conversation so far, the system prompt, the tool results) and every token the model generates (**output**), at different rates, with a discount when input was served from the provider's **prompt cache** — a byte-identical prefix the provider has already processed and can replay cheaply. Hold onto those three numbers — input, output, cache reads — they're the whole vocabulary.
 
@@ -33,7 +33,7 @@ res.usage  // { inputTokens: 18432, outputTokens: 211, cachedInputTokens: 15890 
 
 — and in most codebases that object's lifetime is one log line, if that. Spend visibility doesn't begin with building a metering system. It begins with refusing to drop a number you were already handed.
 
-The actual work is uglier than "read the field", because providers don't agree on what the fields *mean*. Some put usage on the response object; some streaming adapters emit it in a trailing `finish` part — sometimes two of them, only one carrying data. Google reports under `usageMetadata` with its own key names. And Anthropic has a semantic difference that will silently wreck your accounting: its `input_tokens` *excludes* cache reads and cache writes, while Gemini and OpenAI *include* cached tokens in their prompt counts. [efferent](https://github.com/xandreeddev/agent) quarantines all of this in one normalizer:
+The actual work is uglier than "read the field", because providers don't agree on what the fields *mean*. Some put usage on the response object; some streaming adapters emit it in a trailing `finish` part — sometimes two of them, only one carrying data. Google reports under `usageMetadata` with its own key names. And Anthropic has a semantic difference that will silently wreck your accounting: its `input_tokens` *excludes* cache reads and cache writes, while Gemini and OpenAI *include* cached tokens in their prompt counts. [efferent](https://github.com/xandreeddev/efferent) quarantines all of this in one normalizer:
 
 ```ts title="packages/core/src/usecases/promptMapping.ts"
 /** Token usage from a response's `usage` + the stream's finish-part metadata. */
@@ -87,7 +87,7 @@ messages = [...messages, ...tail]
 
 Why this and not a proper ledger table? Because a conversation store is already the system's source of truth for *what happened*, and spend is part of what happened. A parallel table needs its own writes, its own migrations, its own "which conversation was this again" joins — and it desynchronizes the first time anything appends a message without remembering to also log spend. Attached to the message, the receipt is **provenance**: it survives export, it survives a database move, and it can never describe a turn other than the one it's stapled to.
 
-The payoff arrives the moment you close the terminal. Resume a session tomorrow and a stats-table design starts blind — or worse, starts at zero, cheerfully claiming your 200-message history costs nothing to continue. [efferent](https://github.com/xandreeddev/agent) instead replays the receipts:
+The payoff arrives the moment you close the terminal. Resume a session tomorrow and a stats-table design starts blind — or worse, starts at zero, cheerfully claiming your 200-message history costs nothing to continue. [efferent](https://github.com/xandreeddev/efferent) instead replays the receipts:
 
 ```ts title="packages/core/src/usecases/promptMapping.ts"
 /** Scan a persisted conversation for embedded turn usage. */
@@ -125,7 +125,7 @@ The `~` prefix renders in the UI until the next provider reply replaces the gues
 
 ## Attribute by role: helper calls are real spend
 
-Modern agents don't run one model; they run a *cast*. In [efferent](https://github.com/xandreeddev/agent), all agentic work runs on **main**, latency-sensitive helper calls run on **fast**, and background utility work runs on **cheap** — which concrete model fills each role is runtime selection and a post of its own. This post owns the other half of that design: their accounting. Because the moment a feature can quietly call a model, you have spend with no user action attached, and the lazy path — letting it hide inside the feature that made it — is how an agent's bill stops being explainable.
+Modern agents don't run one model; they run a *cast*. In [efferent](https://github.com/xandreeddev/efferent), all agentic work runs on **main**, latency-sensitive helper calls run on **fast**, and background utility work runs on **cheap** — which concrete model fills each role is runtime selection and a post of its own. This post owns the other half of that design: their accounting. Because the moment a feature can quietly call a model, you have spend with no user action attached, and the lazy path — letting it hide inside the feature that made it — is how an agent's bill stops being explainable.
 
 The ledger is almost embarrassingly small. That's the point — attribution is a data shape, not a subsystem:
 
@@ -170,7 +170,7 @@ The result renders as one line in the activity pane: `Σ main 64k · fast 1k · 
 
 ## Attribute by agent: spend as provenance
 
-The second axis of attribution is *which agent*. [efferent](https://github.com/xandreeddev/agent)'s `run_agent` tool spawns folder-scoped **sub-agents** — child loops sandboxed to a directory, fanning out in parallel — and every spawn persists as a node in a branching context tree you can browse, resume, and fork. The tree's mechanics are a post of their own; what matters here is one field on the node schema:
+The second axis of attribution is *which agent*. [efferent](https://github.com/xandreeddev/efferent)'s `run_agent` tool spawns folder-scoped **sub-agents** — child loops sandboxed to a directory, fanning out in parallel — and every spawn persists as a node in a branching context tree you can browse, resume, and fork. The tree's mechanics are a post of their own; what matters here is one field on the node schema:
 
 ```ts title="packages/core/src/entities/AgentContext.ts"
 /** Cumulative token usage for a node's run. */
@@ -218,7 +218,7 @@ One attribution subtlety deserves its sentence, because getting it wrong corrupt
 
 All of that is plumbing. The product decision is *placement*, and the rule is: spend belongs in the pixels adjacent to the next decision, not in a dashboard you check next week. A billing page is an autopsy. A status bar is a co-pilot.
 
-Here's [efferent](https://github.com/xandreeddev/agent)'s layout — activity header top-right, status bar along the bottom:
+Here's [efferent](https://github.com/xandreeddev/efferent)'s layout — activity header top-right, status bar along the bottom:
 
 ```
  ┌─ Fix the failing foo test ──────────────┐  ┌─ activity ───────────┐
@@ -270,7 +270,7 @@ Cache reads are billed at a fraction of full input price, so on long sessions th
 
 ## Budgets close the loop
 
-Visibility tells you; budgets stop you. The two are complements, not substitutes — a meter can't prevent a runaway fan-out at 2 a.m., and a hard cap with no meter just fails mysteriously. In [efferent](https://github.com/xandreeddev/agent), all sub-agents spawned within one top-level turn drain a shared token pool (1M by default), and the same `drainPool` you saw in the node-tracking hook is what depletes it — measurement and enforcement consume *one* number, extracted once:
+Visibility tells you; budgets stop you. The two are complements, not substitutes — a meter can't prevent a runaway fan-out at 2 a.m., and a hard cap with no meter just fails mysteriously. In [efferent](https://github.com/xandreeddev/efferent), all sub-agents spawned within one top-level turn drain a shared token pool (1M by default), and the same `drainPool` you saw in the node-tracking hook is what depletes it — measurement and enforcement consume *one* number, extracted once:
 
 ```ts title="packages/core/src/usecases/tokenBudget.ts"
 /** Tokens a single LLM call costs the pool: what the provider bills. */

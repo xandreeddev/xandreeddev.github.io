@@ -11,7 +11,7 @@ draft: true
 
 Here's a first-run experience you've had: install a promising CLI, run it, and get a stack trace ending in `DATABASE_URL is not defined`. The README knows the drill — start Docker, copy `.env.example`, run the migrate command, *then* try again. The tool hasn't done anything for you yet, and it's already handed you an ops job.
 
-This post is about the opposite bar, and the storage architecture that clears it: **zero-config persistence**. A local tool should remember things the first time you run it, with nothing to set up — and a real server database should be an option you can take later, not a toll you pay at the door. Every snippet comes from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect, where persistence is the difference between an agent and a goldfish: conversations resume, sub-agent context survives restarts, checkpoints make long sessions foldable. All of that has to work thirty seconds after `npm i -g`.
+This post is about the opposite bar, and the storage architecture that clears it: **zero-config persistence**. A local tool should remember things the first time you run it, with nothing to set up — and a real server database should be an option you can take later, not a toll you pay at the door. Every snippet comes from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect, where persistence is the difference between an agent and a goldfish: conversations resume, sub-agent context survives restarts, checkpoints make long sessions foldable. All of that has to work thirty seconds after `npm i -g`.
 
 ## The bar: install, run, remember
 
@@ -30,7 +30,7 @@ if (!url) {
 
 That guard isn't laziness; it's a default that quietly assumes every user is a deployment. But a single-user CLI isn't a deployment. It's one process, on one machine, owned by one human, writing at human-plus-agent rates. There is a database engine designed for exactly that shape: **SQLite** — a full SQL engine that runs *inside your process*. No server, no port, no daemon to babysit; the database is a single file, and "connecting" is a library call. It's the most widely deployed database on earth (it's in your phone and your browser), and for a one-process tool it isn't the compromise option — it's the correct one.
 
-So [efferent](https://github.com/xandreeddev/agent)'s storage policy starts with a parser whose *default branch* is the product decision. One value — the `EFFERENT_DB_URL` environment variable — selects the backend, and the absence of that value is not an error:
+So [efferent](https://github.com/xandreeddev/efferent)'s storage policy starts with a parser whose *default branch* is the product decision. One value — the `EFFERENT_DB_URL` environment variable — selects the backend, and the absence of that value is not an error:
 
 ```ts title="packages/adapters/src/database/migrator.ts"
 const defaultSqlitePath = () => join(homedir(), '.efferent', 'efferent.db')
@@ -116,7 +116,7 @@ One detail in that snippet matters for the next section, and it's the highlighte
 
 A **migration**, if the term is new: schemas change over time, so databases carry a versioned list of change scripts, and a **migrator** tracks which have already run (in a small bookkeeping table) and applies only the new ones. The dominant pattern puts those scripts in a directory — `migrations/0001_init.sql`, `0002_add_titles.sql` — and the migrator reads the directory at runtime. `@effect/sql` supports exactly that via `Migrator.fromFileSystem`.
 
-And it would break [efferent](https://github.com/xandreeddev/agent) the moment anyone installed it. The published package is a single-file bundle: `bun run build` inlines core, adapters, and all of `@effect/*` into one `dist/efferent.js`. There is no `migrations/` directory sitting next to the executable on a user's machine — the repo layout simply doesn't exist at runtime. A filesystem-path loader works perfectly in development, passes every test, and then dies on the first `npm i -g` with a path error pointing at a folder that was never shipped. (The same trap waits for anyone compiling to a standalone binary — same property, no filesystem to read your own source from.)
+And it would break [efferent](https://github.com/xandreeddev/efferent) the moment anyone installed it. The published package is a single-file bundle: `bun run build` inlines core, adapters, and all of `@effect/*` into one `dist/efferent.js`. There is no `migrations/` directory sitting next to the executable on a user's machine — the repo layout simply doesn't exist at runtime. A filesystem-path loader works perfectly in development, passes every test, and then dies on the first `npm i -g` with a path error pointing at a folder that was never shipped. (The same trap waits for anyone compiling to a standalone binary — same property, no filesystem to read your own source from.)
 
 The fix is to stop treating migrations as files the program *finds* and start treating them as data the program *contains*:
 
@@ -141,7 +141,7 @@ The record looks like boilerplate — it's the load-bearing kind. The explicit i
 
 ## Two stores, one database
 
-[efferent](https://github.com/xandreeddev/agent) has two SQL-backed services: `ConversationStore` (conversations, messages, checkpoints) and `ContextTreeStore` (the sub-agent tree). Ports-and-adapters instinct says package each one as a self-contained layer — store plus its own database stack — so consumers can take either without knowing about the other:
+[efferent](https://github.com/xandreeddev/efferent) has two SQL-backed services: `ConversationStore` (conversations, messages, checkpoints) and `ContextTreeStore` (the sub-agent tree). Ports-and-adapters instinct says package each one as a self-contained layer — store plus its own database stack — so consumers can take either without knowing about the other:
 
 ```ts
 // tempting: each store ships with its own batteries
@@ -240,7 +240,7 @@ The discipline that keeps the gap small: generate everything generatable in the 
 
 Tradeoffs, plainly, because "SQLite by default" is a position with edges.
 
-**One writer at a time.** SQLite serializes writers — the whole database has a single write lock. Inside one [efferent](https://github.com/xandreeddev/agent) process that's a non-issue: every fiber's writes funnel through the one shared client anyway, and an agent's write rate (messages, node updates) is nowhere near contention territory. But run two instances against the same file and they *will* contend for the lock; SQLite handles it with waiting, not magic. The design point is one human on one machine, and the single-stack rule from earlier exists precisely because even *one process* accidentally holding two connections was enough to bite.
+**One writer at a time.** SQLite serializes writers — the whole database has a single write lock. Inside one [efferent](https://github.com/xandreeddev/efferent) process that's a non-issue: every fiber's writes funnel through the one shared client anyway, and an agent's write rate (messages, node updates) is nowhere near contention territory. But run two instances against the same file and they *will* contend for the lock; SQLite handles it with waiting, not magic. The design point is one human on one machine, and the single-stack rule from earlier exists precisely because even *one process* accidentally holding two connections was enough to bite.
 
 **No remote access, by design.** Nothing listens on a port — which is a security property you get for free, and a sharing property you give up. Two laptops means two histories. There's no replication story, no "open my home server's file from here." That's not a missing feature; it's the line where the escape hatch begins. The failure mode worth avoiding is pretending a file can be a server — sync-the-file-with-Dropbox schemes corrupt databases for a living.
 

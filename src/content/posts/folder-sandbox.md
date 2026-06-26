@@ -13,7 +13,7 @@ Every coding agent ships, somewhere in its design, an answer to the only securit
 
 There's a third answer, and it's almost embarrassingly small: a directory. The agent reads anywhere, and writes — files *and* shell — inside one folder. No matrix, no rules file, no image to build. One primitive, one check, and a line that the user, the model, and the filesystem all understand the same way.
 
-This post sells that design. The receipts come from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building in the open — its sandbox is exactly this folder line, and every snippet below is lifted from it (simplified for reading; the shapes are real).
+This post sells that design. The receipts come from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building in the open — its sandbox is exactly this folder line, and every snippet below is lifted from it (simplified for reading; the shapes are real).
 
 ## Four ways to draw the line
 
@@ -50,7 +50,7 @@ Reading widely is how an agent builds understanding. Confine reads to the grante
 
 Writes are where the damage is. A wrong write costs you work; a wrong `rm -rf` in the wrong working directory costs you a repository. So the rule is asymmetric on purpose: **reads range over everything; writes and bash are confined to the folder.**
 
-In [efferent](https://github.com/xandreeddev/agent), that entire policy is one value — the `ScopeBinding`:
+In [efferent](https://github.com/xandreeddev/efferent), that entire policy is one value — the `ScopeBinding`:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 export interface ScopeBinding {
@@ -125,7 +125,7 @@ Prompt rules are guidance: a model can forget them, misread them, or be argued o
 
 ## OutOfScope is feedback, not punishment
 
-Every tool in [efferent](https://github.com/xandreeddev/agent)'s toolkit declares `failureMode: 'return'` — a failed tool call comes back to the model as a structured result, not an exception that kills the turn (the full failure-string philosophy is a post of its own). So an out-of-scope write isn't a crash; it's a message. Concretely, a sub-agent scoped to `packages/adapters` that tries to edit a core file gets:
+Every tool in [efferent](https://github.com/xandreeddev/efferent)'s toolkit declares `failureMode: 'return'` — a failed tool call comes back to the model as a structured result, not an exception that kills the turn (the full failure-string philosophy is a post of its own). So an out-of-scope write isn't a crash; it's a message. Concretely, a sub-agent scoped to `packages/adapters` that tries to edit a core file gets:
 
 > `write_file` → `{ error: 'OutOfScope', message: 'packages/core/src/ports/FileSystem.ts is outside this scope (packages/adapters). Defer it to the parent in your summary.' }`
 
@@ -187,7 +187,7 @@ Three layers, three different strengths, and no single one pretending to be the 
 
 ## Sub-agents inherit the line
 
-The sandbox earns its keep when agents start spawning agents. [efferent](https://github.com/xandreeddev/agent)'s delegation is one generic tool — `run_agent({ name, folder, task })` — whose own description tells the model the deal: the spawned agent "reads anywhere but writes/runs bash only inside that folder." Mechanically, a spawn is just a fresh binding:
+The sandbox earns its keep when agents start spawning agents. [efferent](https://github.com/xandreeddev/efferent)'s delegation is one generic tool — `run_agent({ name, folder, task })` — whose own description tells the model the deal: the spawned agent "reads anywhere but writes/runs bash only inside that folder." Mechanically, a spawn is just a fresh binding:
 
 ```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
 const binding: ScopeBinding = {

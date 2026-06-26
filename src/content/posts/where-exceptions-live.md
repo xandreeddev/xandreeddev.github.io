@@ -9,7 +9,7 @@ series:
 draft: false
 ---
 
-Yesterday I was rereading one of my own drafts — the one praising the approval judge in [efferent](https://github.com/xandreeddev/agent) — and the code snippet under my own headline had a `try/catch` in it. In the *domain*. The article was selling typed failures while quoting a function that handled failure the JavaScript way, in the one package where that's supposed to be impossible.
+Yesterday I was rereading one of my own drafts — the one praising the approval judge in [efferent](https://github.com/xandreeddev/efferent) — and the code snippet under my own headline had a `try/catch` in it. In the *domain*. The article was selling typed failures while quoting a function that handled failure the JavaScript way, in the one package where that's supposed to be impossible.
 
 The fix took an afternoon. The afternoon produced a rule worth writing down, an audit that found three more violations — each a different species, the last of them a genuine bug the rule would have prevented. This post is all of it, diffs included.
 
@@ -73,7 +73,7 @@ The lesson isn't "I made the same mistake twice." It's *where* the mistakes were
 
 ## Finding №3: the port that wasn't an Effect
 
-The rule says ports return Effects. Thirty-nine of [efferent](https://github.com/xandreeddev/agent)'s port methods did; the sweep found two that didn't, both on the OAuth-flow port:
+The rule says ports return Effects. Thirty-nine of [efferent](https://github.com/xandreeddev/efferent)'s port methods did; the sweep found two that didn't, both on the OAuth-flow port:
 
 ```ts title="packages/core/src/ports/AuthFlow.ts"
 readonly supportsOAuth: (provider: Provider) => boolean // [!code --]
@@ -169,7 +169,7 @@ Against that: every one of the four findings was *invisible at review time* and 
     packages/core/src --include='*.ts' --exclude='*.test.ts'
 ```
 
-A rule you can grep for is a rule that survives contributors, tired evenings, and coding agents. That last one isn't hypothetical: most of [efferent](https://github.com/xandreeddev/agent) is written with an agent in the loop, and an agent will absolutely reach for `try/catch` around `JSON.parse` — it's the most statistically likely error handling in its training data. The grep doesn't care. It fails the build, the agent reads the failure, and the next attempt uses the decoder. Architecture that defends itself is the only kind that holds when the contributor never gets tired and never reads the style guide.
+A rule you can grep for is a rule that survives contributors, tired evenings, and coding agents. That last one isn't hypothetical: most of [efferent](https://github.com/xandreeddev/efferent) is written with an agent in the loop, and an agent will absolutely reach for `try/catch` around `JSON.parse` — it's the most statistically likely error handling in its training data. The grep doesn't care. It fails the build, the agent reads the failure, and the next attempt uses the decoder. Architecture that defends itself is the only kind that holds when the contributor never gets tired and never reads the style guide.
 
 ## From grep to a gate
 

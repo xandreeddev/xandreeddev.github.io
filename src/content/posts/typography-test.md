@@ -14,7 +14,7 @@ Body text is Newsreader with optical sizing, targeting a ~68-character measure a
 
 ### A third-level heading
 
-Links [look like this](https://github.com/xandreeddev/agent) with an amber underline. Footnotes work too.[^1]
+Links [look like this](https://github.com/xandreeddev/efferent) with an amber underline. Footnotes work too.[^1]
 
 #### A fourth-level heading, italic by design
 

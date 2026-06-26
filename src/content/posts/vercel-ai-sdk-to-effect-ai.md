@@ -6,7 +6,7 @@ tags: [effect, ai, agents]
 draft: true
 ---
 
-One afternoon in late May, four commits moved [efferent](https://github.com/xandreeddev/agent) — the coding agent I'm building on Effect — off the Vercel AI SDK and onto `@effect/ai`. The big one looks like this:
+One afternoon in late May, four commits moved [efferent](https://github.com/xandreeddev/efferent) — the coding agent I'm building on Effect — off the Vercel AI SDK and onto `@effect/ai`. The big one looks like this:
 
 ```
 $ git show --stat 398aa2c   # "move the agent loop onto @effect/ai"
@@ -21,7 +21,7 @@ The one-sentence thesis: **under the SDK, a tool is data with a callback attache
 
 ## Day one: the SDK was the right call
 
-First, what the SDK actually bought — because the generous version is the true one. [efferent](https://github.com/xandreeddev/agent) started as a hexagonal Effect monorepo — `core` for the domain, `adapters` for the outside world — and on day one its single LLM feature was classifying a user message. The Vercel AI SDK got that working in an hour: `generateObject` takes a model, a schema, and a prompt, and returns parsed, validated JSON. Provider abstraction came in the same box — `@ai-sdk/google` today, any other provider by swapping one constructor.
+First, what the SDK actually bought — because the generous version is the true one. [efferent](https://github.com/xandreeddev/efferent) started as a hexagonal Effect monorepo — `core` for the domain, `adapters` for the outside world — and on day one its single LLM feature was classifying a user message. The Vercel AI SDK got that working in an hour: `generateObject` takes a model, a schema, and a prompt, and returns parsed, validated JSON. Provider abstraction came in the same box — `@ai-sdk/google` today, any other provider by swapping one constructor.
 
 Here's that day-one adapter, condensed (the file no longer exists):
 
@@ -50,7 +50,7 @@ The SDK is optimized for getting from zero to a streaming, tool-calling, provide
 
 ## Exhibit A: two type systems for one tool
 
-Within a week, [efferent](https://github.com/xandreeddev/agent) had pivoted into a coding agent with real tools — `read_file`, `edit_file`, `bash` and friends. Tools are where an agent touches the world, so in an Effect codebase they naturally came out Effect-shaped. This was the domain's own tool type, before the migration:
+Within a week, [efferent](https://github.com/xandreeddev/efferent) had pivoted into a coding agent with real tools — `read_file`, `edit_file`, `bash` and friends. Tools are where an agent touches the world, so in an Effect codebase they naturally came out Effect-shaped. This was the domain's own tool type, before the migration:
 
 ```ts title="packages/core/src/entities/AgentTool.ts (pre-migration)"
 /**
@@ -201,7 +201,7 @@ The highlighted line is the structural difference between the two worlds in mini
 
 ## The model is a service too — and the loop stays yours
 
-The last piece: `@effect/ai` ships `LanguageModel` as a `Context.Tag` — a service interface with no implementation attached. This was the part I deleted my own code for with the least regret: the hand-rolled `Llm` port (81 lines, generic-`R` gymnastics and all) was my attempt at exactly this abstraction, and the library's version is better. The agent loop asks the *environment* for a model; which provider answers is a wiring decision made elsewhere. The heart of [efferent](https://github.com/xandreeddev/agent)'s loop today:
+The last piece: `@effect/ai` ships `LanguageModel` as a `Context.Tag` — a service interface with no implementation attached. This was the part I deleted my own code for with the least regret: the hand-rolled `Llm` port (81 lines, generic-`R` gymnastics and all) was my attempt at exactly this abstraction, and the library's version is better. The agent loop asks the *environment* for a model; which provider answers is a wiring decision made elsewhere. The heart of [efferent](https://github.com/xandreeddev/efferent)'s loop today:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
 while (turnIndex < maxSteps) {
@@ -225,7 +225,7 @@ while (turnIndex < maxSteps) {
 
 One call does what the old adapter needed three hundred lines for: `generateText` sends the prompt, decodes the response, decodes each tool call's arguments, runs the handlers — as Effects, concurrently, bounded by that `concurrency` option (under the hood it's an `Effect.forEach` over the step's calls; four parallel `read_file`s, never twenty) — and returns the resolved step. Note what it does *not* do: iterate. `@effect/ai` resolves one step's tools but does not loop across turns; the `while` is mine, on purpose, because the loop is where an agent's actual behavior lives — context transforms, persistence boundaries, stop conditions, recovery (the full anatomy of that loop is a post of its own).
 
-And because `LanguageModel` is a tag rather than a constructor you call with a provider object, the provider became swappable at a distance. The initial Google adapter — the entire file — was 26 lines: compose `GoogleLanguageModel.layer` over `GoogleClient.layerConfig` over an HTTP client. Three and a half hours after the migration landed, [efferent](https://github.com/xandreeddev/agent) had a multi-provider router with a live `/model` switch, precisely because "which model?" had become "which layer implements the tag?" — and a layer can route per request (the router's design is a post of its own).
+And because `LanguageModel` is a tag rather than a constructor you call with a provider object, the provider became swappable at a distance. The initial Google adapter — the entire file — was 26 lines: compose `GoogleLanguageModel.layer` over `GoogleClient.layerConfig` over an HTTP client. Three and a half hours after the migration landed, [efferent](https://github.com/xandreeddev/efferent) had a multi-provider router with a live `/model` switch, precisely because "which model?" had become "which layer implements the tag?" — and a layer can route per request (the router's design is a post of its own).
 
 ## The migration, by the numbers
 
@@ -269,7 +269,7 @@ Swap one tag for another in the requirements union, provide one extra layer at t
 
 ## The cast that saved the data
 
-Now the part I'd teach even to someone who never touches Effect. The migration's headline risk wasn't code — code you can rewrite in an afternoon. It was **data**: every conversation [efferent](https://github.com/xandreeddev/agent) ever had sat in Postgres as `AgentMessage` JSON, one row per message, replayed at the start of every run. Change the message schema and you're writing a data migration for an agent's memory.
+Now the part I'd teach even to someone who never touches Effect. The migration's headline risk wasn't code — code you can rewrite in an afternoon. It was **data**: every conversation [efferent](https://github.com/xandreeddev/efferent) ever had sat in Postgres as `AgentMessage` JSON, one row per message, replayed at the start of every run. Change the message schema and you're writing a data migration for an agent's memory.
 
 The migration commit's diff for the message schema file is empty. Here's why:
 
@@ -339,7 +339,7 @@ if (outcome._tag === 'malformed') {
 
 Notice both recoveries are *typed* branches on tagged errors — the framework's failure vocabulary made the workarounds small and precise. But I still had to discover each failure path empirically and own the policy. The Vercel SDK, with its enormously larger user base, has sanded down more of these edges; with `@effect/ai` (version 0.35 at migration time — a 0.x, like everything in its orbit) you occasionally *are* the sandpaper.
 
-**Long-tail providers are yours to build.** Official `@effect/ai-*` packages cover the majors. [efferent](https://github.com/xandreeddev/agent) also routes to OpenCode Zen and local Ollama, and both adapters are hand-written against the `LanguageModel` interface — SSE parsing, `AiError` construction, prompt mapping, the lot. In SDK-land, somebody on npm has already written nearly every provider. And some lessons no framework absorbs for you: Gemini rejects a tool with zero parameters and requires tool results to be JSON objects — both learned the hard way, both now encoded as conventions in the toolkit (`success` is always a `Struct`).
+**Long-tail providers are yours to build.** Official `@effect/ai-*` packages cover the majors. [efferent](https://github.com/xandreeddev/efferent) also routes to OpenCode Zen and local Ollama, and both adapters are hand-written against the `LanguageModel` interface — SSE parsing, `AiError` construction, prompt mapping, the lot. In SDK-land, somebody on npm has already written nearly every provider. And some lessons no framework absorbs for you: Gemini rejects a tool with zero parameters and requires tool results to be JSON objects — both learned the hard way, both now encoded as conventions in the toolkit (`success` is always a `Struct`).
 
 ## The scorecard
 

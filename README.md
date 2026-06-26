@@ -1,7 +1,7 @@
 # xandreed.dev
 
 Source for [xandreed.dev](https://xandreed.dev) — writing on Effect, agents, and
-evals. Built alongside [efferent](https://github.com/xandreeddev/agent), an
+evals. Built alongside [efferent](https://github.com/xandreeddev/efferent), an
 open-source coding agent on Effect.ts, which the posts draw their examples from.
 
 **No React. No framework JavaScript.** Hand-written CSS, two small inline scripts

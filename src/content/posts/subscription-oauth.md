@@ -13,13 +13,13 @@ The auth story in most agent READMEs is one line: set an environment variable, m
 
 It stops being the story the moment real users show up, because the way most heavy users pay for models in 2026 isn't an API key. It's a subscription — Claude Pro/Max, ChatGPT Plus/Pro — and subscriptions don't hand out API keys. They speak OAuth: an access token that dies in hours, a refresh token that rotates when used, an absolute expiry to track, and request shapes the plain API never asks for. An agent that only accepts API keys is quietly telling subscribers to pay for the same models twice.
 
-[efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect, supports five providers — Anthropic, Google, OpenAI, OpenCode, Ollama — which multiplies the problem: several credential shapes, several lifecycles, two full OAuth implementations, and one local provider that needs no secret at all. Most tools special-case whichever flow they personally need and let the rest rot. The pitch of this post is the alternative: **credentials are a domain concept.** Give them one port, make every shape answer the same verb, and the ugliest protocol work in the codebase collapses into two adapter files nobody upstream knows exist. (Which *model* serves a turn is the router's problem and a post of its own — this is the layer underneath it: whether the call may be made at all.)
+[efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect, supports five providers — Anthropic, Google, OpenAI, OpenCode, Ollama — which multiplies the problem: several credential shapes, several lifecycles, two full OAuth implementations, and one local provider that needs no secret at all. Most tools special-case whichever flow they personally need and let the rest rot. The pitch of this post is the alternative: **credentials are a domain concept.** Give them one port, make every shape answer the same verb, and the ugliest protocol work in the codebase collapses into two adapter files nobody upstream knows exist. (Which *model* serves a turn is the router's problem and a post of its own — this is the layer underneath it: whether the call may be made at all.)
 
 ## Three credential shapes, three lifecycles
 
 Start with what actually has to be stored. An **API key** is the degenerate case: one opaque string, valid until someone revokes it server-side. An **OAuth subscription credential** is three values that only work as a unit — an *access token* (the short-lived proof you attach to requests), a *refresh token* (a long-lived secret whose only job is minting the next access token), and an *expiry* (the moment the access token stops working). And a **local provider** like Ollama, running on your own machine, needs no secret at all — at most a base URL.
 
-That's the entire taxonomy, and [efferent](https://github.com/xandreeddev/agent) writes it down as one union in the core port file:
+That's the entire taxonomy, and [efferent](https://github.com/xandreeddev/efferent) writes it down as one union in the core port file:
 
 ```ts title="packages/core/src/ports/AuthStore.ts"
 export type Credential =
@@ -43,7 +43,7 @@ The highlighted field is where the engineering lives. `expires` turns a credenti
 
 ## One verb hides the lifecycle: `resolveKey`
 
-A *port*, in the hexagonal sense, is an interface the core owns and adapters implement — the core describes what it needs, never how it's done. [efferent](https://github.com/xandreeddev/agent)'s credential port is an Effect `Context.Tag` (a typed service identifier; the full Effect tour is a post of its own), and its surface is small:
+A *port*, in the hexagonal sense, is an interface the core owns and adapters implement — the core describes what it needs, never how it's done. [efferent](https://github.com/xandreeddev/efferent)'s credential port is an Effect `Context.Tag` (a typed service identifier; the full Effect tour is a post of its own), and its surface is small:
 
 ```ts title="packages/core/src/ports/AuthStore.ts"
 export class AuthStore extends Context.Tag('@efferent/core/AuthStore')<
@@ -191,7 +191,7 @@ The provider says "valid for `expires_in` seconds"; the adapter stores an *absol
 
 ## Refresh is lazy — and it's a race
 
-So tokens are on disk with an expiry. Who refreshes them, and when? One school runs a background timer that keeps tokens eternally fresh — more moving parts, and it burns refreshes for sessions that go idle. [efferent](https://github.com/xandreeddev/agent) refreshes *lazily, at the moment of use*: every request resolves its key, and the resolution refreshes only if the token is within a skew window (sixty seconds, on top of the five-minute haircut at mint time) of expiring.
+So tokens are on disk with an expiry. Who refreshes them, and when? One school runs a background timer that keeps tokens eternally fresh — more moving parts, and it burns refreshes for sessions that go idle. [efferent](https://github.com/xandreeddev/efferent) refreshes *lazily, at the moment of use*: every request resolves its key, and the resolution refreshes only if the token is within a skew window (sixty seconds, on top of the five-minute haircut at mint time) of expiring.
 
 Lazy has a sharp edge, though: requests are **concurrent**. A single agent turn can run four tool calls in parallel and fan out sub-agents, each resolving a key. If the token is near expiry, every one of them decides to refresh — and refresh tokens *rotate*: the exchange returns a new refresh token, and the old one may die. Two concurrent refreshes send the same soon-dead refresh token; both may even succeed, but whichever response is persisted *last* can carry the stale pair — and the user is silently logged out, with nothing to blame in the moment it happened. The fix is a *single-flight* gate — a one-permit semaphore, so at most one refresh is ever in flight — plus a re-check inside it:
 
@@ -264,9 +264,9 @@ export const prependClaudeCode = (options: unknown): unknown => ({
 })
 ```
 
-So for subscription traffic — and only subscription traffic — the router prepends that exact system block ahead of [efferent](https://github.com/xandreeddev/agent)'s own system prompt, which rides along as the second block. The provider builder returns a `prependClaudeCode` flag next to the model service, and the router applies the shaping per call. API-key traffic to the same provider is left untouched. The system prompt, it turns out, is part of the authentication surface.
+So for subscription traffic — and only subscription traffic — the router prepends that exact system block ahead of [efferent](https://github.com/xandreeddev/efferent)'s own system prompt, which rides along as the second block. The provider builder returns a `prependClaudeCode` flag next to the model service, and the router applies the shaping per call. API-key traffic to the same provider is left untouched. The system prompt, it turns out, is part of the authentication surface.
 
-OpenAI's subscription lane is more drastic still: ChatGPT-plan traffic doesn't go to `api.openai.com` at all. It goes to a Codex backend (`chatgpt.com/backend-api/codex`) with its own streaming protocol, a `ChatGPT-Account-ID` header carrying an account id that the login flow mines out of a JWT claim in the access token, and a stable per-install id — the two optional fields you saw in the `Credential` schema back at the start, now earning their keep. In [efferent](https://github.com/xandreeddev/agent) that's an entire bespoke adapter, roughly the size of the auth layer itself. "Support subscriptions" is never one feature; it's one feature per provider, each with its own physics.
+OpenAI's subscription lane is more drastic still: ChatGPT-plan traffic doesn't go to `api.openai.com` at all. It goes to a Codex backend (`chatgpt.com/backend-api/codex`) with its own streaming protocol, a `ChatGPT-Account-ID` header carrying an account id that the login flow mines out of a JWT claim in the access token, and a stable per-install id — the two optional fields you saw in the `Credential` schema back at the start, now earning their keep. In [efferent](https://github.com/xandreeddev/efferent) that's an entire bespoke adapter, roughly the size of the auth layer itself. "Support subscriptions" is never one feature; it's one feature per provider, each with its own physics.
 
 ## One port, many shapes
 

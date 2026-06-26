@@ -8,7 +8,7 @@ draft: true
 
 By turn thirty of a coding session, an agent is sending its provider a prompt north of a hundred thousand tokens — and roughly 95% of those bytes are identical to the bytes it sent last turn. **Prompt caching** is the provider-side feature that notices: instead of re-processing the unchanged part of your prompt at full input price, the provider serves it from a cache of its own internal state, and bills the cached portion at a fraction of the normal rate. On Anthropic, a cache read costs about a tenth of the full input price; OpenAI and Gemini discount cached tokens steeply too.
 
-A tenth. On the bulk of every request an agent ever makes. That's not an optimization you sprinkle on at the end — it's the difference between an agent that's economically viable to run all day and one that isn't. And here's the part that took me longest to internalize while building [efferent](https://github.com/xandreeddev/agent): whether you actually *get* that discount is not something you configure. It's a property your whole architecture either has or doesn't. One function in the wrong place — a timestamp interpolated into the system prompt, a transcript "cleaned up" in place — and you silently pay full price forever, with no error message anywhere.
+A tenth. On the bulk of every request an agent ever makes. That's not an optimization you sprinkle on at the end — it's the difference between an agent that's economically viable to run all day and one that isn't. And here's the part that took me longest to internalize while building [efferent](https://github.com/xandreeddev/efferent): whether you actually *get* that discount is not something you configure. It's a property your whole architecture either has or doesn't. One function in the wrong place — a timestamp interpolated into the system prompt, a transcript "cleaned up" in place — and you silently pay full price forever, with no error message anywhere.
 
 This post is the tour I wish I'd had: why agents specifically live or die by this, the one mental model that explains all three major providers, and then each provider in turn — slowest on Anthropic, because it's the only one where doing nothing means caching nothing.
 
@@ -28,7 +28,7 @@ while (true) {
 
 Look at what the provider sees across one task. Turn one: system prompt, tool definitions, user message — say 10k tokens, all new. Turn two: all of that again, plus an assistant message and some tool results — 14k tokens, of which 10k are bytes the provider processed seconds ago. By turn twenty the request is 80k tokens and the genuinely new part is the last 2k. The *output* of each turn is small; the *input* is the entire accumulated past, re-shipped every single time.
 
-[efferent](https://github.com/xandreeddev/agent)'s loop has exactly this shape: each turn maps the persisted message buffer to a prompt, calls the provider-agnostic `LanguageModel`, and appends the response parts as the new tail. Working sessions routinely sit between 50k and 200k tokens of context. Without caching, a forty-turn session bills the early turns' tokens forty times over. With caching, you pay full price for each token roughly once, the discounted rate thereafter — the cost curve goes from quadratic-ish in conversation length to something close to linear.
+[efferent](https://github.com/xandreeddev/efferent)'s loop has exactly this shape: each turn maps the persisted message buffer to a prompt, calls the provider-agnostic `LanguageModel`, and appends the response parts as the new tail. Working sessions routinely sit between 50k and 200k tokens of context. Without caching, a forty-turn session bills the early turns' tokens forty times over. With caching, you pay full price for each token roughly once, the discounted rate thereafter — the cost curve goes from quadratic-ish in conversation length to something close to linear.
 
 So the stakes are clear. The question is what the cache actually keys on, because every design decision in the rest of this post falls out of the answer.
 
@@ -52,13 +52,13 @@ That picture is the whole theory. Everything else is consequences:
 - **Dynamic context belongs at the end.** A message appended at turn twelve invalidates nothing before turn twelve. The tail is free real estate; the head is load-bearing.
 - **History is sacred.** Rewriting a message from turn three — even to make it *smaller* — re-bills every token after turn three at full price.
 
-The providers differ only in how you opt in and how you observe it. Which provider backs a given [efferent](https://github.com/xandreeddev/agent) turn is a runtime selection — the multi-provider router is a post of its own — but the router has one caching-relevant job that *is* this post's subject: shaping each outgoing request the way that provider's cache wants it. Three providers, three shapes.
+The providers differ only in how you opt in and how you observe it. Which provider backs a given [efferent](https://github.com/xandreeddev/efferent) turn is a runtime selection — the multi-provider router is a post of its own — but the router has one caching-relevant job that *is* this post's subject: shaping each outgoing request the way that provider's cache wants it. Three providers, three shapes.
 
 ## OpenAI: automatic, plus a routing hint
 
 OpenAI is the low-ceremony end of the spectrum. Prompts past a modest size threshold are **prefix-cached automatically** — no parameter, no markers, no opt-in. Send the same prefix twice in close succession and the second request reports cached tokens in its usage block and bills them at a discount.
 
-There's one knob worth turning anyway. OpenAI's cache is sharded across their fleet, and a request only hits cache entries on the machine it lands on. The `prompt_cache_key` parameter is a routing hint: requests carrying the same key get routed consistently, so they keep landing where their warm prefix lives. [efferent](https://github.com/xandreeddev/agent) pins it when the router builds the OpenAI client:
+There's one knob worth turning anyway. OpenAI's cache is sharded across their fleet, and a request only hits cache entries on the machine it lands on. The `prompt_cache_key` parameter is a routing hint: requests carrying the same key get routed consistently, so they keep landing where their warm prefix lives. [efferent](https://github.com/xandreeddev/efferent) pins it when the router builds the OpenAI client:
 
 ```ts title="packages/adapters/src/llm/providers.ts"
 case 'openai':
@@ -81,7 +81,7 @@ A static key is the honest 90% version: every request from the agent routes toge
 
 Gemini calls its version **implicit context caching**, and it's the same deal as OpenAI ergonomically: stable prefixes are cached automatically, cached tokens are billed at a discount, and there is nothing to send. What's different is where you *see* it — Gemini reports a `cachedContentTokenCount` inside the response's usage metadata, and if you don't go looking for it you'll never know whether your prefix discipline is working.
 
-[efferent](https://github.com/xandreeddev/agent) normalizes every provider's usage report into one shape, and the Gemini cache figure comes from exactly that field:
+[efferent](https://github.com/xandreeddev/efferent) normalizes every provider's usage report into one shape, and the Gemini cache figure comes from exactly that field:
 
 ```ts title="packages/core/src/usecases/promptMapping.ts"
 export interface TokenUsage {
@@ -101,7 +101,7 @@ export const extractUsage = (usage: RawUsage, content: ReadonlyArray<Part>): Tok
 }
 ```
 
-Gemini also offers an *explicit* caching API — you upload content as a named `cachedContent` resource and reference it by handle, paying storage instead of re-transmission. [efferent](https://github.com/xandreeddev/agent) doesn't use it, for an honest reason: the `@effect/ai-google` adapter always sends the full `contents` array and has no way to suppress the system prompt and tools in favor of a cache handle, so wiring it up would be theater. Implicit caching is real and live; the explicit tier waits until the library can express it. Knowing which optimizations you're *actually* getting beats pretending.
+Gemini also offers an *explicit* caching API — you upload content as a named `cachedContent` resource and reference it by handle, paying storage instead of re-transmission. [efferent](https://github.com/xandreeddev/efferent) doesn't use it, for an honest reason: the `@effect/ai-google` adapter always sends the full `contents` array and has no way to suppress the system prompt and tools in favor of a cache handle, so wiring it up would be theater. Implicit caching is real and live; the explicit tier waits until the library can express it. Knowing which optimizations you're *actually* getting beats pretending.
 
 ## Anthropic: nothing caches until you say so
 
@@ -109,7 +109,7 @@ Here's the one that bites people. **Anthropic caches nothing by default.** No ma
 
 Opting in means attaching `cache_control: { type: 'ephemeral' }` to specific content blocks in the request. Each marked block is a **breakpoint**: a position where Anthropic will both *write* a cache entry for the prefix ending there and *look back* for an existing entry to read. "Ephemeral" names the default lifetime — an entry lives about five minutes, refreshed each time it's read, so an active session keeps itself warm. The economics make the opt-in design legible: cache reads cost ~0.1× the base input price, but cache *writes* cost a premium — about 25% over base for the five-minute tier. Caching is a bet that the same prefix comes back. Anthropic makes you place the bet explicitly.
 
-You get at most **four breakpoints per request**, so placement is a real decision. The pattern for conversational agents — straight from Anthropic's own docs, implemented in [efferent](https://github.com/xandreeddev/agent) as a pure function the router applies to every Anthropic-bound request — uses three: the last system message, and the last two non-system messages.
+You get at most **four breakpoints per request**, so placement is a real decision. The pattern for conversational agents — straight from Anthropic's own docs, implemented in [efferent](https://github.com/xandreeddev/efferent) as a pure function the router applies to every Anthropic-bound request — uses three: the last system message, and the last two non-system messages.
 
 ### One anchor, two moving markers
 
@@ -181,7 +181,7 @@ it('stamps the last system message and the last two non-system messages', () => 
 })
 ```
 
-One more placement decision, because the write premium cuts both ways: the router applies this function **only to the main agent loop**. [efferent](https://github.com/xandreeddev/agent)'s one-shot helper tiers — the utility model that writes session titles and compression digests, the grounding-only web-search calls — never stamp. Their prompts are sent once and never again; marking them would pay the +25% write premium on every request and read back exactly nothing. Caching a prompt that never recurs is strictly worse than not caching it. Opt-in means you can decline.
+One more placement decision, because the write premium cuts both ways: the router applies this function **only to the main agent loop**. [efferent](https://github.com/xandreeddev/efferent)'s one-shot helper tiers — the utility model that writes session titles and compression digests, the grounding-only web-search calls — never stamp. Their prompts are sent once and never again; marking them would pay the +25% write premium on every request and read back exactly nothing. Caching a prompt that never recurs is strictly worse than not caching it. Opt-in means you can decline.
 
 ## The contract the rest of the system signs
 
@@ -198,15 +198,15 @@ history[3].content = summarize(history[3].content)
 history.push(compress(res.tail))
 ```
 
-**Clause two: compression happens at append time, or not at all.** [efferent](https://github.com/xandreeddev/agent)'s context-headroom machinery — a post of its own — exists precisely under this constraint. When a tool result comes back oversized (an 80k-character `cat`, a grep flood), it's compressed *the moment it enters the buffer*: the persisted record and every future prompt carry the compressed form from byte one, and nothing already sent to a provider is ever rewritten. The marker left behind names what was dropped and how the model can get it back, so compression is reversible on demand — but reversal produces a *new* tool call appended at the tail, never a mutation of the old bytes. Compress the future, never the past.
+**Clause two: compression happens at append time, or not at all.** [efferent](https://github.com/xandreeddev/efferent)'s context-headroom machinery — a post of its own — exists precisely under this constraint. When a tool result comes back oversized (an 80k-character `cat`, a grep flood), it's compressed *the moment it enters the buffer*: the persisted record and every future prompt carry the compressed form from byte one, and nothing already sent to a provider is ever rewritten. The marker left behind names what was dropped and how the model can get it back, so compression is reversible on demand — but reversal produces a *new* tool call appended at the tail, never a mutation of the old bytes. Compress the future, never the past.
 
-**Clause three: when history must actually shrink, shrink it as one deliberate prefix rebuild.** Eventually a session outgrows its context window and no amount of tail-compression saves you; the loaded history has to fold into a summary. That's a prefix change — there's no avoiding the cold miss. The discipline is to take the hit *once, on purpose, at a turn boundary*: [efferent](https://github.com/xandreeddev/agent)'s handoff writes a checkpoint (the original rows are kept, never modified — they feed the persistent context tree, a post of its own) and the next request goes out with a brand-new prefix — summary first, recent messages after. One cold request writes the new cache entries; every turn after that is warm again. The failure mode this clause forbids is *incremental* rewriting — trimming a little here, rewording a little there, each edit a fresh full-price re-read of everything downstream. Fold rarely, fold completely, and let the frontier rebuild.
+**Clause three: when history must actually shrink, shrink it as one deliberate prefix rebuild.** Eventually a session outgrows its context window and no amount of tail-compression saves you; the loaded history has to fold into a summary. That's a prefix change — there's no avoiding the cold miss. The discipline is to take the hit *once, on purpose, at a turn boundary*: [efferent](https://github.com/xandreeddev/efferent)'s handoff writes a checkpoint (the original rows are kept, never modified — they feed the persistent context tree, a post of its own) and the next request goes out with a brand-new prefix — summary first, recent messages after. One cold request writes the new cache entries; every turn after that is warm again. The failure mode this clause forbids is *incremental* rewriting — trimming a little here, rewording a little there, each edit a fresh full-price re-read of everything downstream. Fold rarely, fold completely, and let the frontier rebuild.
 
 None of these clauses live in the caching code. They live in the store, the loop, and the compression path — which is the point. You can't bolt this property on; the architecture has it or it doesn't.
 
 ## Watching it work: one number in the status bar
 
-A property this silent needs instrumentation, because both failure modes — never caching, and quietly breaking the prefix — produce zero errors. [efferent](https://github.com/xandreeddev/agent)'s TUI keeps the answer permanently on screen: the status bar reads `model · gauge 12% 18k/1M · 86% cached · …`, where the cache figure is the share of the last turn's input served from the provider's cache. The computation is one line:
+A property this silent needs instrumentation, because both failure modes — never caching, and quietly breaking the prefix — produce zero errors. [efferent](https://github.com/xandreeddev/efferent)'s TUI keeps the answer permanently on screen: the status bar reads `model · gauge 12% 18k/1M · 86% cached · …`, where the cache figure is the share of the last turn's input served from the provider's cache. The computation is one line:
 
 ```ts title="packages/cli/src/tui-solid/presentation/statusBar.ts"
 /**
@@ -246,7 +246,7 @@ Honest ledger, because none of this is free.
 
 **The ephemeral TTL is short.** Five minutes, refreshed on each read. An active session keeps itself warm indefinitely, but step away for coffee and the next turn pays cold-write prices on the whole transcript again. The 1-hour TTL exists for exactly this, at roughly double the write premium — which means it needs more subsequent reads to pay for itself, and for an interactive CLI session the five-minute tier usually wins. There's no free tier of patience.
 
-**Writes cost more than not caching.** The +25% premium means stamping breakpoints on a prompt that never recurs is a guaranteed loss — the reason [efferent](https://github.com/xandreeddev/agent)'s one-shot helper calls deliberately don't stamp. And all three providers enforce a minimum cacheable prefix — on the order of a thousand to a few thousand tokens depending on model — below which markers are silently ignored. Small prompts don't cache, and shouldn't.
+**Writes cost more than not caching.** The +25% premium means stamping breakpoints on a prompt that never recurs is a guaranteed loss — the reason [efferent](https://github.com/xandreeddev/efferent)'s one-shot helper calls deliberately don't stamp. And all three providers enforce a minimum cacheable prefix — on the order of a thousand to a few thousand tokens depending on model — below which markers are silently ignored. Small prompts don't cache, and shouldn't.
 
 **The breakpoint budget is real.** Four per request, three spent on the conversational pattern. A feature that wants its own breakpoint — a per-document marker for a RAG prefix, say — is competing for one remaining slot, and preserving user-set markers (as the stamping function does) is also how you avoid blowing the budget by double-stamping.
 

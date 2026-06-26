@@ -11,7 +11,7 @@ draft: true
 
 I closed the laptop mid-task on Tuesday — the agent halfway through a refactor, a constraint I'd handed it an hour earlier ("don't touch the public API") still in force. Wednesday morning I reopened it, typed *keep going*, and it kept going: the same files in mind, the same constraint honored, the thread picked up as if the night hadn't happened.
 
-That looks like memory. It isn't — not in the model. The model that produced Wednesday's first token had no recollection of Tuesday; it had never seen any of it. What carried the constraint across the night was not the model remembering. It was a list of messages, written to disk, read back, and handed to a brand-new stateless call *in full*. This post is about that list: why **the transcript is the agent's entire memory**, why you keep all of it, and how it persists and resumes — worked through [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect.
+That looks like memory. It isn't — not in the model. The model that produced Wednesday's first token had no recollection of Tuesday; it had never seen any of it. What carried the constraint across the night was not the model remembering. It was a list of messages, written to disk, read back, and handed to a brand-new stateless call *in full*. This post is about that list: why **the transcript is the agent's entire memory**, why you keep all of it, and how it persists and resumes — worked through [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect.
 
 ## A model call has no memory
 

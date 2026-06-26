@@ -13,7 +13,7 @@ Here's the question that started this. A single agent run cost me $2.14 and took
 
 In an Effect program you don't do any of that, and the reason is the point of this post. Tracing, metrics, and logs aren't a library you add. They're built into the runtime the same way typed errors and structured concurrency are. **You don't instrument an Effect program — you describe what's worth observing as ordinary values, and a layer at the edge decides whether, and where, anyone records them.** Telemetry-off costs nothing, and "nothing" here is a claim the runtime keeps, not a thing you hope is true.
 
-Everything below is real code from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect. The agent is the receipt; the subject is the three built-ins and the one layer.
+Everything below is real code from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect. The agent is the receipt; the subject is the three built-ins and the one layer.
 
 One paragraph of Effect for readers who haven't met it. An `Effect<A, E, R>` is a *description* of a program — inert until run — that succeeds with an `A`, can fail with a typed `E`, and needs the services in `R` to execute. A **`Layer`** is a recipe that builds those services, supplied once at the program's edge, which is what makes swapping an implementation (real exporter, in-memory exporter, *no* exporter) a one-line change at one location. Hold onto that last clause — it's the whole argument.
 

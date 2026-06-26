@@ -7,7 +7,7 @@ tags: [tui, agents, typescript]
 
 A coding agent's UI has a strange job description. For long stretches nothing happens — a fiber is parked on a provider request, or the human is reading. Then a turn resolves and the terminal has to absorb a hailstorm: assistant prose, a dozen tool pills flipping from running to done, three sub-agent rows updating in place, a context gauge, a spinner and an elapsed clock ticking eight times a second. Each of those updates touches a few terminal cells. The natural cost of "this number changed" should be roughly the cost of changing the number.
 
-This post is the architecture of a terminal UI built around that sentence — the TUI inside [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect. The README's one-liner is *no Electron, no React, no Ink*; the stack is **OpenTUI + SolidJS signals**. The agent is the production receipt throughout, but the subject is the architecture: how a native renderer, a fine-grained reactivity graph, and an Effect-driven agent loop meet in one process without any of the three leaking into the others.
+This post is the architecture of a terminal UI built around that sentence — the TUI inside [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect. The README's one-liner is *no Electron, no React, no Ink*; the stack is **OpenTUI + SolidJS signals**. The agent is the production receipt throughout, but the subject is the architecture: how a native renderer, a fine-grained reactivity graph, and an Effect-driven agent loop meet in one process without any of the three leaking into the others.
 
 ## The workload is the argument
 
@@ -37,7 +37,7 @@ That's the whole thesis. Everything below is what it takes to hold onto it in a 
 
 `@opentui/solid` is the bridge: a Solid renderer that maps JSX directly onto those renderables. Compose the two and the pipeline gets very short. Solid's dependency graph already knows *exactly which property of which node* a signal write affects, so the write lands directly on the retained renderable; the native side repaints what changed on the next frame tick. There is no "figure out what changed" phase anywhere in the stack, because nothing ever forgot.
 
-Here's the renderer's whole lifecycle in [efferent](https://github.com/xandreeddev/agent), wrapped so the terminal is restored on success, failure, *and* interruption:
+Here's the renderer's whole lifecycle in [efferent](https://github.com/xandreeddev/efferent), wrapped so the terminal is restored on success, failure, *and* interruption:
 
 ```ts title="packages/cli/src/tui-solid/runtime.ts"
 const renderer = yield* Effect.acquireRelease(
@@ -298,7 +298,7 @@ export interface Tokens {
 }
 ```
 
-A **theme** is one complete set of values for those fixed names — [efferent](https://github.com/xandreeddev/agent) ships three: `efferent` (the default — warm near-black with an ember/verdigris/chartreuse triad), `one-dark`, and `tokyo-night`. The token *shape* is the stable interface; a theme is just data satisfying it. Which leaves one problem: `presentation/` is pure and static, so its `tokens` is a module constant — how does `:theme` switch live? With the smallest possible amount of magic:
+A **theme** is one complete set of values for those fixed names — [efferent](https://github.com/xandreeddev/efferent) ships three: `efferent` (the default — warm near-black with an ember/verdigris/chartreuse triad), `one-dark`, and `tokyo-night`. The token *shape* is the stable interface; a theme is just data satisfying it. Which leaves one problem: `presentation/` is pure and static, so its `tokens` is a module constant — how does `:theme` switch live? With the smallest possible amount of magic:
 
 ```ts title="packages/cli/src/tui-solid/state/theme.ts"
 const [activeTheme, setActiveTheme] = createSignal<Theme>(defaultTheme)

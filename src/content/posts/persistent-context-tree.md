@@ -23,7 +23,7 @@ Look at what the summary *isn't*. It isn't the forty files the sub-agent read. I
 
 Then, twenty minutes later, you need a follow-up. "Good — now apply that retry config change you proposed." In the subprocess model there is exactly one option: spawn a fresh sub-agent and pay for the entire investigation again. The re-reading, the dead ends, the ruling-out — from zero. The most expensive thing your system produced last hour was a context window full of verified knowledge about your codebase, and you treated it as exhaust.
 
-[efferent](https://github.com/xandreeddev/agent), the coding agent I'm building, makes the opposite bet: **a sub-agent's context is capital**. Every spawn becomes a node in a persistent tree — stored in the same database as the conversations themselves, resumable, forkable, summarizable, browsable. This post is the full tour: what a node is, the one tool that creates them, the three verbs for spending history, what happens when the repo moves under the tree, what parallel fan-out costs, and the UI for walking through all of it.
+[efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building, makes the opposite bet: **a sub-agent's context is capital**. Every spawn becomes a node in a persistent tree — stored in the same database as the conversations themselves, resumable, forkable, summarizable, browsable. This post is the full tour: what a node is, the one tool that creates them, the three verbs for spending history, what happens when the repo moves under the tree, what parallel fan-out costs, and the UI for walking through all of it.
 
 ## A finished run is a row, not a memory
 
@@ -58,7 +58,7 @@ That's the whole bet in schema form. Now, how do nodes get made?
 
 ## One spawning tool, and a description that does the teaching
 
-[efferent](https://github.com/xandreeddev/agent) has exactly one delegation tool. Not a tool per pre-configured agent role, not a YAML registry of personas — one generic `run_agent` whose parameters the model fills in at call time:
+[efferent](https://github.com/xandreeddev/efferent) has exactly one delegation tool. Not a tool per pre-configured agent role, not a YAML registry of personas — one generic `run_agent` whose parameters the model fills in at call time:
 
 ```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
 const RunAgentTool = Tool.make('run_agent', {
@@ -100,7 +100,7 @@ Three things in this declaration deserve a slow look.
 
 `seedFromNode` plus `seedMode` is where persisted context turns into spendable capital. Given a node id from any prior result, the parent has three verbs — and the interesting question is why there are three instead of one.
 
-The answer is that "continue that earlier work" is not one operation. It's a point on a curve that trades **fidelity** (how much of the original context survives) against **cost** (how many tokens every subsequent turn pays to carry it). One verb would force one point on that curve; [efferent](https://github.com/xandreeddev/agent) exposes three:
+The answer is that "continue that earlier work" is not one operation. It's a point on a curve that trades **fidelity** (how much of the original context survives) against **cost** (how many tokens every subsequent turn pays to carry it). One verb would force one point on that curve; [efferent](https://github.com/xandreeddev/efferent) exposes three:
 
 - **`resume`** — continue *in* the node's own context. The task is appended to its persisted history and the loop re-runs over all of it; the same node keeps growing. Full fidelity: every file the agent read is still literally in its window, byte for byte. Also full price: the entire history is re-fed on every turn. The tool description reserves it for when *exact file contents in that context matter* — "fix the bug in the function you just wrote" wants the function verbatim, not a paraphrase.
 - **`branch`** — fork a *new* node seeded with a copy of the source's messages. Same fidelity as resume on the first turn, but the original node stays frozen — you can retry, or take an alternative direction, without contaminating the context you might want to come back to. This is the default when `seedMode` is omitted.
@@ -222,7 +222,7 @@ Spend is also visible after the fact — every node records its billed usage, an
 
 ## Browsing the capital
 
-Capital you can't inspect is just a bigger database. The `:tree` command in [efferent](https://github.com/xandreeddev/agent)'s TUI opens the agent navigator: the active session as the root, with its persisted sub-agent tree railed beneath it, git-log-graph style —
+Capital you can't inspect is just a bigger database. The `:tree` command in [efferent](https://github.com/xandreeddev/efferent)'s TUI opens the agent navigator: the active session as the root, with its persisted sub-agent tree railed beneath it, git-log-graph style —
 
 ```
 ❯ refactor retry handling                       ◀ active

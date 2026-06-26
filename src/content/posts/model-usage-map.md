@@ -15,7 +15,7 @@ Not which models, not how the prompts work — just the count. How many distinct
 
 Most teams can't answer it, and the reason isn't sloppiness. The number starts at one — the chat endpoint, the agent loop, the feature the app exists for — and then grows the way dependencies grow: quietly, one good reason at a time. A summarizer so long outputs fit. A classifier to route requests. A title generator because untitled sessions look terrible in a sidebar. Each is a small, sensible diff that sailed through review. Two quarters later the application calls a model from nine places, four of them hardcode a model id somebody chose in March, and nobody can say what happens when the cheap one starts returning 429s.
 
-We already solved this shape of problem once. Library dependencies used to accrete exactly this way — an unenumerable `node_modules` jungle — until lockfiles and audit tooling made the inventory explicit and checkable. **Model call sites deserve the same treatment: enumerated, tiered, budgeted, and documented.** I'll call the resulting artifact a *model-usage map*, and this post argues you should keep one by walking through a complete, real census: every LLM call site in [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building — which actually ships its map as a file in the repo.
+We already solved this shape of problem once. Library dependencies used to accrete exactly this way — an unenumerable `node_modules` jungle — until lockfiles and audit tooling made the inventory explicit and checkable. **Model call sites deserve the same treatment: enumerated, tiered, budgeted, and documented.** I'll call the resulting artifact a *model-usage map*, and this post argues you should keep one by walking through a complete, real census: every LLM call site in [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building — which actually ships its map as a file in the repo.
 
 ## How the census gets away from you
 
@@ -42,7 +42,7 @@ The third currency is the tell. Ask "what happens when this call fails?" for eac
 
 ## One rule and a map
 
-[efferent](https://github.com/xandreeddev/agent) is a long-running agent, which means it grows helper calls faster than most apps — anything that touches context, approvals, or session chrome is a candidate. The defense is one routing rule, stated in the repo's own words:
+[efferent](https://github.com/xandreeddev/efferent) is a long-running agent, which means it grows helper calls faster than most apps — anything that touches context, approvals, or session chrome is a candidate. The defense is one routing rule, stated in the repo's own words:
 
 > All *agentic* work — anything that drives the tool loop — runs on **main**, through the router `LanguageModel`. Everything else is a **one-shot helper call** and goes through `UtilityLlm.complete(prompt, { role })`, picking `fast` or `cheap`. Web search is the deliberate exception (a provider-server-side tool, not a chat completion). No other module may call a provider SDK.
 
@@ -86,7 +86,7 @@ Trigger: an unmatched command, mid-turn, with a human waiting — so it runs on 
 
 ### Call site: headroom digests
 
-[efferent](https://github.com/xandreeddev/agent) compresses oversized tool results the moment they enter the message buffer — a 200k-character build log gets clipped to head + tail with a marker explaining how to retrieve the rest. (The mechanics of doing that without poisoning the provider's prompt cache are a post of their own.) The helper call: when the dropped middle is big enough to matter — at least 4,000 characters — a fast-tier model writes a ≤120-word digest of what was cut, woven into the marker so the main model knows what it isn't seeing:
+[efferent](https://github.com/xandreeddev/efferent) compresses oversized tool results the moment they enter the message buffer — a 200k-character build log gets clipped to head + tail with a marker explaining how to retrieve the rest. (The mechanics of doing that without poisoning the provider's prompt cache are a post of their own.) The helper call: when the dropped middle is big enough to matter — at least 4,000 characters — a fast-tier model writes a ≤120-word digest of what was cut, woven into the marker so the main model knows what it isn't seeing:
 
 ```ts title="packages/core/src/usecases/headroom.ts"
 const utility = yield* Effect.serviceOption(UtilityLlm) // optional dependency: absence is a policy, not an error // [!code highlight]
@@ -136,7 +136,7 @@ An exception you can point to, with a reason attached, is fine. The unacceptable
 
 Look back at the generic sketch from the accretion section. Its real disease isn't the helpers — it's that each one names a concrete model id at the call site. `'small-model-2'` appears twice; are those the same decision or two coincidences? When a better small model ships, the migration is a grep, and greps miss.
 
-The fix is a layer of indirection with names: **roles**. [efferent](https://github.com/xandreeddev/agent) has three — `main`, `fast`, `cheap` — and they're defined by *job description*, not by model:
+The fix is a layer of indirection with names: **roles**. [efferent](https://github.com/xandreeddev/efferent) has three — `main`, `fast`, `cheap` — and they're defined by *job description*, not by model:
 
 - **main** — the brain: every turn of the agent loop, root and sub-agents alike, plus the one helper where quality is the whole point (the handoff brief).
 - **fast** — latency-sensitive helpers inside a running turn: the approval judge, the headroom digests. Quick verdicts where a round-trip on main would drag the run.
@@ -221,7 +221,7 @@ if (firstExchange) {
 
 ## Where the tokens land
 
-A census of call sites implies a census of spend, and the role vocabulary is what makes one possible. [efferent](https://github.com/xandreeddev/agent)'s session ledger is keyed by role, not by model:
+A census of call sites implies a census of spend, and the role vocabulary is what makes one possible. [efferent](https://github.com/xandreeddev/efferent)'s session ledger is keyed by role, not by model:
 
 ```ts title="packages/cli/src/tui-solid/presentation/sidePane.ts"
 export interface SessionStats {
@@ -247,7 +247,7 @@ And two call sites *don't* have one. The handoff brief and web search bill real 
 
 ## Ship the map
 
-Everything above exists in [efferent](https://github.com/xandreeddev/agent) as a checked-in document: `docs/models.md`, titled "Model usage map." It opens with the one rule, tabulates all nine call sites (the six in-app rows plus the eval ones), explains how a selection becomes a client, lists the non-inference provider traffic that bills no tokens (model catalogue fetches, OAuth refresh — completeness means listing what *doesn't* count too), and ends with the accounting summary and its admitted gaps.
+Everything above exists in [efferent](https://github.com/xandreeddev/efferent) as a checked-in document: `docs/models.md`, titled "Model usage map." It opens with the one rule, tabulates all nine call sites (the six in-app rows plus the eval ones), explains how a selection becomes a client, lists the non-inference provider traffic that bills no tokens (model catalogue fetches, OAuth refresh — completeness means listing what *doesn't* count too), and ends with the accounting summary and its admitted gaps.
 
 The claim I want to leave you with: **every LLM application should ship this document.** Not a wiki page — a file in the repo, next to the code it indexes, versioned with it. It's the same genre as a threat model or a dependency policy: a structured answer to a question that will otherwise be answered ad hoc, during an incident, by whoever is on call. If yours has one row, write the one-row version; the value is the discipline of having a place where the next row must be written down.
 
@@ -267,7 +267,7 @@ Honesty section. Three real prices.
 
 **Tiering is indirection.** A reader of `judgeApproval` sees `role: 'fast'` and must hop to settings to learn which model that is today — one more level than a literal model id, and on day one, with a single call site, it's pure ceremony. The investment pays at call site three or four; if your app will only ever have one, you don't need roles, just the document.
 
-**Cheap models doing judgment is a quality bet, and you must eval it.** Moving the judge to the fast tier asserts that a small model can classify command safety reliably. That's testable, and it had better be tested — [efferent](https://github.com/xandreeddev/agent) runs eval suites for exactly such behaviors, and the judge is additionally designed so its worst failure is a spurious dialog rather than a wrong approval. The design lesson generalizes: helpers whose *errors are cheap* (an unnecessary prompt, a missing digest) are good tier-down candidates; helpers whose errors compound silently — like the handoff brief, where a dropped fact is unrecoverable — are not, which is why that row stays on main. If you tier down a call site without an eval and without bounding its failure, you've replaced an unaudited cost with an unaudited quality regression, which is strictly worse because nobody's dashboard shows it.
+**Cheap models doing judgment is a quality bet, and you must eval it.** Moving the judge to the fast tier asserts that a small model can classify command safety reliably. That's testable, and it had better be tested — [efferent](https://github.com/xandreeddev/efferent) runs eval suites for exactly such behaviors, and the judge is additionally designed so its worst failure is a spurious dialog rather than a wrong approval. The design lesson generalizes: helpers whose *errors are cheap* (an unnecessary prompt, a missing digest) are good tier-down candidates; helpers whose errors compound silently — like the handoff brief, where a dropped fact is unrecoverable — are not, which is why that row stays on main. If you tier down a call site without an eval and without bounding its failure, you've replaced an unaudited cost with an unaudited quality regression, which is strictly worse because nobody's dashboard shows it.
 
 **The map goes stale.** It's prose; the compiler won't defend it. Without the review rule it drifts within a month, and a stale inventory is actively misleading. The mitigations are structural — few doorways so there's little to forget, a greppable invariant for CI, the same-PR rule — but the honest answer is that the map is a discipline, not a mechanism, and disciplines need someone who cares.
 

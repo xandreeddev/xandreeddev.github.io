@@ -14,11 +14,11 @@ The options usually on offer are bad in three distinct ways:
 2. **Paste it into every session.** Groundhog day. The knowledge lives in someone's notes app, every teammate has a slightly different version, and the one day you skip the paste is the day the agent hand-edits a generated file.
 3. **Wait for the plugin API.** It's coming, any quarter now. It will have a manifest format, a registration call, a versioning story, and a review process, and you will write TypeScript to tell a language model things you could have told it in English.
 
-There's a fourth option, and it's almost embarrassingly simple: **markdown files in known places**. The agent discovers them, the filesystem is the registry, and git is the distribution mechanism. [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building, ships this as its entire extension system — no plugin API, no manifest schema, no registration step. This post is about why that works, and about the one design decision that makes it scale: **pay tokens for an index up front; lazy-load the bodies on demand.**
+There's a fourth option, and it's almost embarrassingly simple: **markdown files in known places**. The agent discovers them, the filesystem is the registry, and git is the distribution mechanism. [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building, ships this as its entire extension system — no plugin API, no manifest schema, no registration step. This post is about why that works, and about the one design decision that makes it scale: **pay tokens for an index up front; lazy-load the bodies on demand.**
 
 ## A plugin is a markdown file
 
-Start with the unit. A **skill** is a markdown file with two parts: a tiny frontmatter header carrying a `name` and a one-line `description`, and a free-form body containing the actual procedure. Here's a real one — it lives at `.efferent/skills/commit-style.md` in [efferent](https://github.com/xandreeddev/agent)'s own repo, trimmed for the page:
+Start with the unit. A **skill** is a markdown file with two parts: a tiny frontmatter header carrying a `name` and a one-line `description`, and a free-form body containing the actual procedure. Here's a real one — it lives at `.efferent/skills/commit-style.md` in [efferent](https://github.com/xandreeddev/efferent)'s own repo, trimmed for the page:
 
 ```markdown
 ---
@@ -71,7 +71,7 @@ The highlighted line is the design decision this post is named after. The body i
 
 ## The index: what the model actually sees
 
-So how does the model learn the skill exists? At startup, [efferent](https://github.com/xandreeddev/agent) injects the names and descriptions — only those — into the system prompt. The rendering is a dozen lines:
+So how does the model learn the skill exists? At startup, [efferent](https://github.com/xandreeddev/efferent) injects the names and descriptions — only those — into the system prompt. The rendering is a dozen lines:
 
 ```ts title="packages/core/src/prompts/coder.ts"
 const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
@@ -177,7 +177,7 @@ Two details pay rent here. First, the failure: `failureMode: 'return'` means a b
 
 ## Discovery: the filesystem is the registry
 
-Nothing registers a skill. [efferent](https://github.com/xandreeddev/agent) finds them at startup by walking a search path of `.efferent/skills/` directories, from the working directory up through every ancestor, ending at your home directory:
+Nothing registers a skill. [efferent](https://github.com/xandreeddev/efferent) finds them at startup by walking a search path of `.efferent/skills/` directories, from the working directory up through every ancestor, ending at your home directory:
 
 ```ts title="packages/core/src/usecases/loadSkills.ts"
 /** cwd/.efferent/skills, each ancestor up to root, then home (deduped). */
@@ -210,7 +210,7 @@ That `never` in the error channel is a policy, compiler-checked: a missing direc
 
 ## Instruction files: the eager half
 
-Skills are the lazy tier, and lazy has a hard limit: the model might not look. Some knowledge can't tolerate that — *never hand-edit generated files* is not advice to consult when relevant, it's a constraint that must be in force on every single turn. For that, [efferent](https://github.com/xandreeddev/agent) has a second discovery mechanism with the opposite loading policy: **instruction files**, eagerly inlined into every prompt.
+Skills are the lazy tier, and lazy has a hard limit: the model might not look. Some knowledge can't tolerate that — *never hand-edit generated files* is not advice to consult when relevant, it's a constraint that must be in force on every single turn. For that, [efferent](https://github.com/xandreeddev/efferent) has a second discovery mechanism with the opposite loading policy: **instruction files**, eagerly inlined into every prompt.
 
 The convention: a file named `AGENT.md` anywhere from the filesystem root down to your working directory, plus an `AGENT.local.md` sibling for guidance that's yours rather than the team's — same discovery, but you add it to `.gitignore` so your personal notes never land in a PR. Discovery walks the ancestor chain and renders root-most first, so the model reads broad guidance and then narrows: organization-level conventions, then the repo's, then the package's, then your home-directory file last.
 
@@ -242,7 +242,7 @@ The two mechanisms together give you the placement rule, and it's worth stating 
 
 ## SCOPE.md: instructions with a postcode
 
-There's a third file in the family, for knowledge that's true of a *place* rather than a project: `SCOPE.md`. Drop one in a directory and its body becomes ambient context for any agent working there. [efferent](https://github.com/xandreeddev/agent) discovers these per-folder:
+There's a third file in the family, for knowledge that's true of a *place* rather than a project: `SCOPE.md`. Drop one in a directory and its body becomes ambient context for any agent working there. [efferent](https://github.com/xandreeddev/efferent) discovers these per-folder:
 
 ```ts title="packages/core/src/usecases/discoverScopeTree.ts"
 export const getScopePromptBody = (
@@ -260,11 +260,11 @@ export const getScopePromptBody = (
   })
 ```
 
-A `SCOPE.md` at the workspace root feeds the main agent's prompt under a `# Project scope` heading. One in a subdirectory is injected verbatim — under `## Scope-specific instructions` — into any sub-agent dispatched to work in that folder, which is where this mechanism earns its keep in [efferent](https://github.com/xandreeddev/agent)'s folder-sandboxed sub-agent system (a post of its own). The frontmatter follows the same `name` + `description` convention as skills, parsed by the same shape of forgiving parser, with the same silent-skip policy for malformed files. One family of conventions, three loading policies: skills load on demand, AGENT.md loads always, SCOPE.md loads *when you're standing there*.
+A `SCOPE.md` at the workspace root feeds the main agent's prompt under a `# Project scope` heading. One in a subdirectory is injected verbatim — under `## Scope-specific instructions` — into any sub-agent dispatched to work in that folder, which is where this mechanism earns its keep in [efferent](https://github.com/xandreeddev/efferent)'s folder-sandboxed sub-agent system (a post of its own). The frontmatter follows the same `name` + `description` convention as skills, parsed by the same shape of forgiving parser, with the same silent-skip policy for malformed files. One family of conventions, three loading policies: skills load on demand, AGENT.md loads always, SCOPE.md loads *when you're standing there*.
 
 ## Writing skills that earn their line
 
-The mechanism is the easy half. After writing and rewriting [efferent](https://github.com/xandreeddev/agent)'s own skills, here's what separates ones that fire from ones that rot.
+The mechanism is the easy half. After writing and rewriting [efferent](https://github.com/xandreeddev/efferent)'s own skills, here's what separates ones that fire from ones that rot.
 
 **Name the task, not the topic.** `commit-style`, `db-migration`, `release` — a skill is the answer to "how do I do X here," so its name should be an X. A skill named `git` or `database` is a filing cabinet, not a procedure, and the model has no moment at which it obviously applies.
 
@@ -288,7 +288,7 @@ The honest section. Markdown-as-plugin has real costs, and most of them are the 
 
 **The index still costs, linearly.** Forty-odd tokens per skill, every request, forever. Ten skills round to free; a hundred are multiple thousands of tokens of permanent overhead and an index too long to reliably read — at which point you're rediscovering retrieval and need tiers, curation, or search. Lazy loading flattens the cost of *bodies*; nothing flattens the cost of the catalog except keeping it short. The mechanism does not curate for you.
 
-**Discoverability cuts both ways.** "What does the agent know right now?" has no obvious answer when knowledge is scattered across three filename conventions and an ancestor walk. [efferent](https://github.com/xandreeddev/agent)'s TUI answers it directly — the activity pane's workspace section lists the discovered skills and instruction files for the session — and some equivalent is genuinely necessary, because the same forgiveness that makes a broken skill harmless makes it *invisible*: a typo'd frontmatter key doesn't error, it just quietly removes the skill from existence.
+**Discoverability cuts both ways.** "What does the agent know right now?" has no obvious answer when knowledge is scattered across three filename conventions and an ancestor walk. [efferent](https://github.com/xandreeddev/efferent)'s TUI answers it directly — the activity pane's workspace section lists the discovered skills and instruction files for the session — and some equivalent is genuinely necessary, because the same forgiveness that makes a broken skill harmless makes it *invisible*: a typo'd frontmatter key doesn't error, it just quietly removes the skill from existence.
 
 **And the model can simply not look.** The whole lazy tier rides on the model judging relevance from one line. Mostly it does — the trigger-clause pattern makes it boringly reliable — but "mostly" is the honest word, and when it misses, the failure is indistinguishable from the skill not existing. The eager tier exists precisely because some knowledge can't accept that gamble.
 

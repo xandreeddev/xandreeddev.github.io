@@ -12,7 +12,7 @@ Strip any LLM application to its load-bearing properties and you get a list: eve
 
 Read that list again as a requirements document. It's not asking for a framework. It's asking for typed failures, declarative retries, schema-driven decoding, swappable dependencies, bounded concurrency, and real cancellation — which is to say, it's asking for an effect system. The thesis of this post: **AI didn't create new engineering problems; it took the problems effect systems were built for and made them the whole application.**
 
-I'll make the case property by property. Sketches are generic; where a claim needs a production receipt, it points at [efferent](https://github.com/xandreeddev/agent), the coding agent I build in the open on exactly this stack.
+I'll make the case property by property. Sketches are generic; where a claim needs a production receipt, it points at [efferent](https://github.com/xandreeddev/efferent), the coding agent I build in the open on exactly this stack.
 
 ## Failure is the common case, so it has to be typed
 
@@ -72,7 +72,7 @@ class LanguageModel extends Context.Tag('LanguageModel')<LanguageModel, {
 }>() {}
 ```
 
-Everything interesting follows from the tag. Implementations are layers, so provider choice is wiring, not plumbing through forty call sites. Tests provide a scripted model and run the *real* application logic against canned replies — no mocking framework, no HTTP interception. Evals provide the live model and swap the side-effecting services instead. And because `@effect/ai` ships this tag as a shared vocabulary, the ecosystem's adapters all speak it — in [efferent](https://github.com/xandreeddev/agent) the live layer is a router that re-resolves the provider on every call, which is how a `:model` switch mid-session applies to the very next message. The modularity isn't an architecture you maintain; it's what services-as-values *do*.
+Everything interesting follows from the tag. Implementations are layers, so provider choice is wiring, not plumbing through forty call sites. Tests provide a scripted model and run the *real* application logic against canned replies — no mocking framework, no HTTP interception. Evals provide the live model and swap the side-effecting services instead. And because `@effect/ai` ships this tag as a shared vocabulary, the ecosystem's adapters all speak it — in [efferent](https://github.com/xandreeddev/efferent) the live layer is a router that re-resolves the provider on every call, which is how a `:model` switch mid-session applies to the very next message. The modularity isn't an architecture you maintain; it's what services-as-values *do*.
 
 ## Concurrency you can put a number on
 
@@ -104,7 +104,7 @@ That's the whole argument in seven lines: nothing in it is a framework feature b
 
 ## And the agent era doubles it
 
-One more property, specific to this moment: most new code is now written with coding agents in the loop, and the same machinery that makes Effect good to *run* AI makes it good to be *written by* AI. Typed error channels mean a generated function can't silently swallow failures; the `R` channel makes a generated change's new dependencies visible in its signature; greppable, compiler-enforced rules survive a contributor that never reads the style guide. An agent iterating against `tsc` converges on coherent programs before a human reviews them. [efferent](https://github.com/xandreeddev/agent) is the existence proof I can offer — an agent built *on* Effect, largely *by* agents, where the architecture's rules held because the compiler enforced them.
+One more property, specific to this moment: most new code is now written with coding agents in the loop, and the same machinery that makes Effect good to *run* AI makes it good to be *written by* AI. Typed error channels mean a generated function can't silently swallow failures; the `R` channel makes a generated change's new dependencies visible in its signature; greppable, compiler-enforced rules survive a contributor that never reads the style guide. An agent iterating against `tsc` converges on coherent programs before a human reviews them. [efferent](https://github.com/xandreeddev/efferent) is the existence proof I can offer — an agent built *on* Effect, largely *by* agents, where the architecture's rules held because the compiler enforced them.
 
 ## Where the argument doesn't apply
 

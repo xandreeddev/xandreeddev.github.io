@@ -12,7 +12,7 @@ A terminal agent has a feature so small that nobody puts it on a feature list: y
 
 If you build on Effect — or honestly on any dependency-injection setup — the *natural* way to wire an LLM provider makes that feature impossible. This post is about why, and about the surprisingly small amount of code that makes it trivial instead. The sentence to keep is the title: **provider choice is request-scoped state, not architecture.** Everything below is that sentence applied twice — once to providers, then again, one level up, to model roles.
 
-The receipts come from [efferent](https://github.com/xandreeddev/agent), a coding agent built on Effect.ts that routes a single conversation across Anthropic, Google, OpenAI, OpenCode, and a local Ollama — switching between them live, without ever rebuilding its runtime.
+The receipts come from [efferent](https://github.com/xandreeddev/efferent), a coding agent built on Effect.ts that routes a single conversation across Anthropic, Google, OpenAI, OpenCode, and a local Ollama — switching between them live, without ever rebuilding its runtime.
 
 ## The idiomatic answer answers the wrong question
 
@@ -50,7 +50,7 @@ export interface ModelSelection {
 }
 ```
 
-[efferent](https://github.com/xandreeddev/agent)'s core declares a `ModelRegistry` service around it:
+[efferent](https://github.com/xandreeddev/efferent)'s core declares a `ModelRegistry` service around it:
 
 ```ts title="packages/core/src/ports/ModelRegistry.ts"
 export class ModelRegistry extends Context.Tag('@efferent/core/ModelRegistry')<
@@ -222,7 +222,7 @@ Everything so far is the happy path, and multi-provider abstractions don't die o
 
 The sharpest example is Gemini. Its thinking models return a `thought_signature` — a signed blob attached to reasoning and tool-call parts — and expect it echoed back on the next turn. Drop it and, at best, the model loses its reasoning thread; on tool calls, the API can reject your history outright. If your conversation type normalizes everything down to `{ role, content }` — which is the first thing every well-meaning abstraction does — you have silently destroyed provider state you didn't know existed, and you'll discover it as a confusing 400 three turns later.
 
-So [efferent](https://github.com/xandreeddev/agent)'s persisted message schema gives every content part a slot that core *never reads*:
+So [efferent](https://github.com/xandreeddev/efferent)'s persisted message schema gives every content part a slot that core *never reads*:
 
 ```ts title="packages/core/src/entities/Conversation.ts"
 export const ReasoningPart = Schema.Struct({
@@ -246,11 +246,11 @@ export const AssistantMessage = Schema.Struct({
 })
 ```
 
-`Schema.Unknown` is the type-level version of a promise: core stores this, persists it, and hands it back, but never branches on it. The mapping layer that converts between persisted messages and `@effect/ai` prompts carries the blob verbatim in both directions — message `providerOptions` becomes prompt-part options on the way out, response-part metadata becomes `providerOptions` on the way back in. That round-trip is deliberate enough that [efferent](https://github.com/xandreeddev/agent) skips the framework's own convenience converter, which drops response metadata, and maps the parts by hand purely to keep the blob alive.
+`Schema.Unknown` is the type-level version of a promise: core stores this, persists it, and hands it back, but never branches on it. The mapping layer that converts between persisted messages and `@effect/ai` prompts carries the blob verbatim in both directions — message `providerOptions` becomes prompt-part options on the way out, response-part metadata becomes `providerOptions` on the way back in. That round-trip is deliberate enough that [efferent](https://github.com/xandreeddev/efferent) skips the framework's own convenience converter, which drops response metadata, and maps the parts by hand purely to keep the blob alive.
 
 And the blob is namespaced by provider — `{ google: { … } }`, `{ anthropic: { … } }` — so exactly one adapter ever looks inside its own key. Gemini's signatures ride past the Anthropic adapter as inert luggage; nobody else can develop an opinion about them. An abstraction is allowed to have a hole in it, as long as the hole is typed and exactly one party looks inside.
 
-The hole turned out to be useful enough that [efferent](https://github.com/xandreeddev/agent) claims a namespace of its own: after each turn, the API-reported token usage is stowed under `providerOptions.efferent` on the assistant message, so resuming a session days later can rebuild the spend gauge by scanning the transcript instead of replaying anything. Opaque-to-core, meaningful-to-one-reader is a pattern, not a workaround.
+The hole turned out to be useful enough that [efferent](https://github.com/xandreeddev/efferent) claims a namespace of its own: after each turn, the API-reported token usage is stowed under `providerOptions.efferent` on the assistant message, so resuming a session days later can rebuild the spend gauge by scanning the transcript instead of replaying anything. Opaque-to-core, meaningful-to-one-reader is a pattern, not a workaround.
 
 ## Failures that name the fix
 
@@ -274,7 +274,7 @@ Two deliberate choices in five lines. First, this *fails* rather than degrading 
 
 ## Roles: the same move, one level up
 
-Here's the part that wasn't in the first version of this design. A real agent makes far more LLM calls than it has chat turns. Inside a single turn of [efferent](https://github.com/xandreeddev/agent): a tool dumps forty thousand tokens of build output and a model digests it down; a bash command needs a safety verdict before the approval dialog decides whether to interrupt the human. In the background: every session gets titled after its first exchange. Run all of that on your big model and you pay frontier prices and frontier latency for jobs a small model does fine. Hardcode a small model's id somewhere and you've recreated the original sin — a model choice baked into the program.
+Here's the part that wasn't in the first version of this design. A real agent makes far more LLM calls than it has chat turns. Inside a single turn of [efferent](https://github.com/xandreeddev/efferent): a tool dumps forty thousand tokens of build output and a model digests it down; a bash command needs a safety verdict before the approval dialog decides whether to interrupt the human. In the background: every session gets titled after its first exchange. Run all of that on your big model and you pay frontier prices and frontier latency for jobs a small model does fine. Hardcode a small model's id somewhere and you've recreated the original sin — a model choice baked into the program.
 
 The answer is a tiny vocabulary of **roles** — and roles are the thesis again, applied at a second level:
 
@@ -322,7 +322,7 @@ One small asymmetry worth noticing: the router stamps Anthropic cache breakpoint
 
 ## What layers are still for
 
-None of this dethrones layers; it relocates them to the question they actually answer. [efferent](https://github.com/xandreeddev/agent)'s unit tests provide a *scripted* `LanguageModel` — `Effect.provideService(LanguageModel.LanguageModel, scripted)` — and run the entire agent loop against canned responses, asserting on tool dispatch and malformed-call recovery with zero network involved. That's a different program, so it's a layer swap, made at composition like every layer swap. The eval suites go the other way and keep the live router with real credentials around in-memory stores, because their whole purpose is judging real model behavior. Both substitutions happen at a composition root; neither happens mid-session. Layers pick which *world* the program runs in; state picks which *model* answers the next message. Confusing the two is how you end up restarting your agent to honor a dropdown.
+None of this dethrones layers; it relocates them to the question they actually answer. [efferent](https://github.com/xandreeddev/efferent)'s unit tests provide a *scripted* `LanguageModel` — `Effect.provideService(LanguageModel.LanguageModel, scripted)` — and run the entire agent loop against canned responses, asserting on tool dispatch and malformed-call recovery with zero network involved. That's a different program, so it's a layer swap, made at composition like every layer swap. The eval suites go the other way and keep the live router with real credentials around in-memory stores, because their whole purpose is judging real model behavior. Both substitutions happen at a composition root; neither happens mid-session. Layers pick which *world* the program runs in; state picks which *model* answers the next message. Confusing the two is how you end up restarting your agent to honor a dropdown.
 
 ## What it costs
 
@@ -332,7 +332,7 @@ The honest ledger, because this design isn't free.
 
 **Per-call construction is cheap, not free — and it's a commitment.** Building a provider service per call costs almost nothing here because the heavy thing (the HTTP client) is shared and the wrapper is configuration. But the design forbids any client-level state surviving between calls; a provider SDK that wanted a warm session handle would fight this architecture, and the architecture would have to win.
 
-**Switching mid-conversation is cheap, not lossless.** The router makes the *switch* instant; it cannot make the new provider accept history it didn't write. Gemini rejects prior non-Gemini tool calls that lack its `thought_signature` — a hard 400 — so [efferent](https://github.com/xandreeddev/agent) surfaces a one-line hint when you switch providers mid-conversation, and the honest escape hatch is `/reset`. The opaque-state slot preserves each provider's luggage; it can't conjure luggage that never existed.
+**Switching mid-conversation is cheap, not lossless.** The router makes the *switch* instant; it cannot make the new provider accept history it didn't write. Gemini rejects prior non-Gemini tool calls that lack its `thought_signature` — a hard 400 — so [efferent](https://github.com/xandreeddev/efferent) surfaces a one-line hint when you switch providers mid-conversation, and the honest escape hatch is `/reset`. The opaque-state slot preserves each provider's luggage; it can't conjure luggage that never existed.
 
 **Every call re-reads settings and credentials.** Against local JSON files this is unmeasurable. But it's a real constraint: move those stores onto a network and you'd suddenly want the cache this design's correctness comes from not having.
 

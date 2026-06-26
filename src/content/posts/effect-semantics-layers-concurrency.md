@@ -17,7 +17,7 @@ Effect.Effect<A, E, R>
 
 Two of those parameters get an act of this post each — `R` is dependencies, `E` is failures — and the third act belongs to the runtime that executes the descriptions: concurrency.
 
-Nothing here is a toy. Every snippet is lifted from [efferent](https://github.com/xandreeddev/agent), a coding agent I'm building on Effect — long-running, concurrent, full of slow IO and humans who press Esc at inconvenient moments. Which is to say: a stress test for exactly the three channels.
+Nothing here is a toy. Every snippet is lifted from [efferent](https://github.com/xandreeddev/efferent), a coding agent I'm building on Effect — long-running, concurrent, full of slow IO and humans who press Esc at inconvenient moments. Which is to say: a stress test for exactly the three channels.
 
 ## Prelude: what an Effect actually is
 
@@ -82,7 +82,7 @@ export class ConversationStore extends Context.Tag(
 
 (The `Data.TaggedError` at the top is Act II's subject — for now, read it as a failure type with a name.) Using a service is one line — `const store = yield* ConversationStore` — because a tag is itself a little effect: one that succeeds with its service. And the act of using it adds the tag to the surrounding effect's `R`. That's the part that changes how a codebase feels: **the R channel is the architecture, inferred.** A use-case that reads the store and runs shell commands has type `Effect<A, E, ConversationStore | Shell>`, whether or not you remembered to document that. You cannot quietly reach into the database from a function whose type says it doesn't.
 
-This is ports-and-adapters, but with the dependency direction enforced by the compiler. [efferent](https://github.com/xandreeddev/agent)'s core package declares twelve such tags — `FileSystem`, `Shell`, `Approval`, `AuthStore`, `ModelRegistry`, `SettingsStore`, and so on — and imports zero provider SDKs. The adapters package implements them. Core compiles without knowing Postgres exists.
+This is ports-and-adapters, but with the dependency direction enforced by the compiler. [efferent](https://github.com/xandreeddev/efferent)'s core package declares twelve such tags — `FileSystem`, `Shell`, `Approval`, `AuthStore`, `ModelRegistry`, `SettingsStore`, and so on — and imports zero provider SDKs. The adapters package implements them. Core compiles without knowing Postgres exists.
 
 ## Act I, scene 2 — layers: constructors as values
 
@@ -120,7 +120,7 @@ That's the entire composition root of a multi-provider, multi-mode CLI. Three op
 
 This is also where the prelude's loose end ties off. The program from Act I carries `ConversationStore | Shell | …` in its `R`; at the entry point it gets `Effect.provide(AppLive)`, and providing *subtracts* — every service the layer supplies disappears from the requirement. A fully provided program has `R = never`, and that's the only thing a runtime will run. Forget one service and the missing tag is a compile error at the one line where wiring happens.
 
-Two more semantics hide in plain sight. First, **memoization**: layers are built once per layer *value*. Reference the same `const` in five places and Effect constructs one instance — [efferent](https://github.com/xandreeddev/agent)'s eval environment leans on this, naming `const FsLive = LocalFileSystemLive` precisely so two references resolve to a single `FileSystem`. Second, **a layer can be chosen by a program**, because of course it can — it's a value:
+Two more semantics hide in plain sight. First, **memoization**: layers are built once per layer *value*. Reference the same `const` in five places and Effect constructs one instance — [efferent](https://github.com/xandreeddev/efferent)'s eval environment leans on this, naming `const FsLive = LocalFileSystemLive` precisely so two references resolve to a single `FileSystem`. Second, **a layer can be chosen by a program**, because of course it can — it's a value:
 
 ```ts title="packages/adapters/src/database/migrator.ts"
 export const StoresLive = Layer.unwrapEffect(
@@ -144,7 +144,7 @@ export const StoresLive = Layer.unwrapEffect(
 
 ## Act I, scene 3 — the swap: one program, three worlds
 
-Here's the payoff for all that ceremony. [efferent](https://github.com/xandreeddev/agent)'s eval suites run the *actual agent* — same loop, same prompts, same toolkit — inside a different world:
+Here's the payoff for all that ceremony. [efferent](https://github.com/xandreeddev/efferent)'s eval suites run the *actual agent* — same loop, same prompts, same toolkit — inside a different world:
 
 ```ts title="packages/evals/src/env.ts"
 const FsLive = LocalFileSystemLive
@@ -215,7 +215,7 @@ A `Scope` is this idea reified: a lifetime, as a value, that any number of acqui
 
 One discipline keeps the layer machinery from going wrong: **layers answer "the program is different"; state answers "the request is different."** Tests run a different program — layer swap. A user switching LLM providers mid-session is changing a preference — that must *not* be a layer, or you're rebuilding the runtime to honor a dropdown.
 
-[efferent](https://github.com/xandreeddev/agent)'s `LanguageModel` is therefore one layer whose implementation routes per call:
+[efferent](https://github.com/xandreeddev/efferent)'s `LanguageModel` is therefore one layer whose implementation routes per call:
 
 ```ts title="packages/adapters/src/llm/router.ts"
 streamText: (options) =>
@@ -243,7 +243,7 @@ yield* store.append(id, msg).pipe(
 
 No `instanceof` ladders, no error-code constants, no guessing what a catch block might receive — the compiler knows exactly which failures are still possible after each handler.
 
-In an agent, the error channel has an unusual second consumer: not just humans, but *the model*. [efferent](https://github.com/xandreeddev/agent)'s tools all declare `failureMode: 'return'` — a handler failure becomes a tool **result** the model reads and reacts to, not an exception that kills the turn. The interesting case is failures the tool handler never sees, because the model's arguments didn't even decode:
+In an agent, the error channel has an unusual second consumer: not just humans, but *the model*. [efferent](https://github.com/xandreeddev/efferent)'s tools all declare `failureMode: 'return'` — a handler failure becomes a tool **result** the model reads and reacts to, not an exception that kills the turn. The interesting case is failures the tool handler never sees, because the model's arguments didn't even decode:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
 // Wrap the toolkit's handler so a model-caused decode failure
@@ -287,7 +287,7 @@ Effect programs run on **fibers** — lightweight threads, cheap enough to have 
 
 On top of fibers sits a small standard library of coordination primitives. What sold me wasn't any one of them — it's that one real system needs *all* of them at once, and they compose because each is just another effect value on the same runtime.
 
-One turn of [efferent](https://github.com/xandreeddev/agent) can have four tool handlers in flight, three sub-agents fanning out across folders, a UI fiber painting tokens, and a human deciding whether to allow `rm`. Here's the toolkit that holds it together.
+One turn of [efferent](https://github.com/xandreeddev/efferent) can have four tool handlers in flight, three sub-agents fanning out across folders, a UI fiber painting tokens, and a human deciding whether to allow `rm`. Here's the toolkit that holds it together.
 
 ### Bounded fan-out: a number, not an architecture
 
@@ -317,7 +317,7 @@ Hooks deep inside the loop — assistant deltas, tool starts, sub-agent spawns �
 
 ### Semaphore: mutual exclusion per key
 
-[efferent](https://github.com/xandreeddev/agent)'s sub-agents are sandboxed to folders, which makes *disjoint* folders safe to run concurrently by construction. Two spawns into the *same* folder would race on the same files — so each folder gets a one-permit semaphore, created on demand:
+[efferent](https://github.com/xandreeddev/efferent)'s sub-agents are sandboxed to folders, which makes *disjoint* folders safe to run concurrently by construction. Two spawns into the *same* folder would race on the same files — so each folder gets a one-permit semaphore, created on demand:
 
 ```ts title="packages/core/src/usecases/folderLock.ts"
 export type FolderLocks = Ref.Ref<ReadonlyMap<string, Effect.Semaphore>>
@@ -349,7 +349,7 @@ export const withFolderLock =
 
 A `Ref` is a mutable cell whose every operation is atomic, and the problem it solves is the oldest one in concurrency. With a plain variable, `pool = pool - cost` is a read and a write with a gap between them; two fibers in that gap lose an update, the bill comes out wrong, and nothing crashes to tell you. `Ref.update(pool, (n) => n - cost)` is one indivisible step — a thousand concurrent drains serialize correctly, no lock, no luck. Just as important: reads and writes are effects, so shared mutable state stops being ambient. It's declared, passed as a value, and visible in every signature that touches it.
 
-[efferent](https://github.com/xandreeddev/agent) uses exactly that as a spend gate: every sub-agent spawned within a turn drains a single shared token pool —
+[efferent](https://github.com/xandreeddev/efferent) uses exactly that as a spend gate: every sub-agent spawned within a turn drains a single shared token pool —
 
 ```ts title="packages/core/src/usecases/tokenBudget.ts"
 /** Default pool: 1M tokens per top-level turn across all sub-agents. */
@@ -385,7 +385,7 @@ const child = runChildAgent(task).pipe(
 // the parent's own fiber: untouched — no save-and-restore code
 ```
 
-No global to mutate and carefully reset, no context parameter threaded through forty signatures. [efferent](https://github.com/xandreeddev/agent) carries each agent's identity this way — which is what lets a tool handler built once at the composition root know, at call time, *which* agent in *which* subtree is invoking it:
+No global to mutate and carefully reset, no context parameter threaded through forty signatures. [efferent](https://github.com/xandreeddev/efferent) carries each agent's identity this way — which is what lets a tool handler built once at the composition root know, at call time, *which* agent in *which* subtree is invoking it:
 
 ```ts title="packages/core/src/usecases/runContext.ts"
 export interface RunContext {
@@ -423,7 +423,7 @@ Press Esc mid-turn and watch what one interrupt does: the in-flight `generateTex
 
 ## The service you didn't write
 
-One more consequence of services-as-tags: a *library* can ship the tag and you ship the layer. [efferent](https://github.com/xandreeddev/agent)'s port for the LLM isn't a port I wrote — it's `@effect/ai`'s `LanguageModel` service; the router from earlier is just its live layer. The same package treats tools as schema-typed values:
+One more consequence of services-as-tags: a *library* can ship the tag and you ship the layer. [efferent](https://github.com/xandreeddev/efferent)'s port for the LLM isn't a port I wrote — it's `@effect/ai`'s `LanguageModel` service; the router from earlier is just its live layer. The same package treats tools as schema-typed values:
 
 ```ts title="packages/core/src/usecases/codingToolkit.ts"
 export const ReadFile = Tool.make('read_file', {
@@ -459,4 +459,4 @@ Here's the argument I actually care about in 2026: most new code is written with
 
 Effect turns each one into something the compiler rejects. A generated function that touches a new service wears it in its `R` — reviewing the change is reading a signature diff, not an archaeology dig through call sites. A swallowed failure doesn't typecheck against an honest `E`, and `never` is a claim the agent has to *earn*, the same way `judgeApproval` earned it above. And because the concurrency primitives are named, composable values, the agent reaches for `Semaphore` and `Queue` instead of inventing either badly — the worst code agents write is bespoke async plumbing, and Effect simply removes the occasion for it.
 
-That changes the feedback loop more than any prompt ever will. Instructions in an agent's context are suggestions; types are enforcement. An agent iterating against `tsc --noEmit` converges on a coherent program *before a human reads it*, because the rails it can't leave are the same properties that make code good: visible dependencies, visible failures, visible concurrency. The biggest factors for crap code, solved at the type level — and unlike a human, an agent never gets tired of satisfying the compiler. That's why [efferent](https://github.com/xandreeddev/agent) is built on Effect, and why the next thing I start will be too.
+That changes the feedback loop more than any prompt ever will. Instructions in an agent's context are suggestions; types are enforcement. An agent iterating against `tsc --noEmit` converges on a coherent program *before a human reads it*, because the rails it can't leave are the same properties that make code good: visible dependencies, visible failures, visible concurrency. The biggest factors for crap code, solved at the type level — and unlike a human, an agent never gets tired of satisfying the compiler. That's why [efferent](https://github.com/xandreeddev/efferent) is built on Effect, and why the next thing I start will be too.

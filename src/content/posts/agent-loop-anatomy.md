@@ -13,7 +13,7 @@ draft: true
 
 That's not a dismissal. It's the load-bearing observation of this post, because once the loop itself stops being magic, you can see where the engineering really lives: in what gets assembled each lap, in who decides when to stop, in what the loop tells the outside world, in what gets persisted, and in what happens when the model emits garbage. The edges, not the center.
 
-Everything below is lifted from [efferent](https://github.com/xandreeddev/agent), the coding agent I'm building on Effect. Its entire loop is one ~250-line file, `agentLoop.ts`, and this post is a guided dissection of it — simplified where simplification teaches, but every claim checked against the real code.
+Everything below is lifted from [efferent](https://github.com/xandreeddev/efferent), the coding agent I'm building on Effect. Its entire loop is one ~250-line file, `agentLoop.ts`, and this post is a guided dissection of it — simplified where simplification teaches, but every claim checked against the real code.
 
 ## One turn, in ten naive lines
 
@@ -39,9 +39,9 @@ But every line of the sketch hides a decision. Who actually executes the tools o
 
 ## The division of labor: the step is the library's, the loop is yours
 
-The first decision is where to stop writing code. [efferent](https://github.com/xandreeddev/agent) sits on `@effect/ai`, whose `LanguageModel.generateText` does something stronger than a raw provider call: hand it a **toolkit** — a set of schema-typed tool definitions whose handlers are Effects — and it resolves *one entire step*. It decodes the model's tool calls against the schemas, runs your handlers with bounded concurrency, and returns a response that already contains both the assistant's parts *and* the tool results. One step in, one fully-resolved step out.
+The first decision is where to stop writing code. [efferent](https://github.com/xandreeddev/efferent) sits on `@effect/ai`, whose `LanguageModel.generateText` does something stronger than a raw provider call: hand it a **toolkit** — a set of schema-typed tool definitions whose handlers are Effects — and it resolves *one entire step*. It decodes the model's tool calls against the schemas, runs your handlers with bounded concurrency, and returns a response that already contains both the assistant's parts *and* the tool results. One step in, one fully-resolved step out.
 
-What it deliberately does not do is iterate. Calling `generateText` again with the grown history — the loop — is left to you, and the doc comment at the top of [efferent](https://github.com/xandreeddev/agent)'s loop file treats that as a feature, not a gap. Here's the skeleton:
+What it deliberately does not do is iterate. Calling `generateText` again with the grown history — the loop — is left to you, and the doc comment at the top of [efferent](https://github.com/xandreeddev/efferent)'s loop file treats that as a feature, not a gap. Here's the skeleton:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
 export const runAgentLoop = (input: RunAgentLoopInput) =>
@@ -83,13 +83,13 @@ export const runAgentLoop = (input: RunAgentLoopInput) =>
 
 The division is exactly right, and it's worth saying why. The per-step machinery — argument decoding, handler dispatch, running four handlers at once without leaking on interruption — is genuinely fiddly and completely generic. Let a library own it. (`DEFAULT_TOOL_CONCURRENCY` is 4: enough that a model emitting three sub-agent spawns in one turn gets real fan-out, bounded so a twenty-call turn doesn't stampede a provider rate limit.)
 
-The *iteration* is the opposite: nothing about it is generic. The `messages` buffer is your domain entity — it's what you persist, compress, and resume from. The exit condition is product policy. The observation surface decides what your UI can ever show. Whoever owns the loop owns all four, which is why a framework that owns your loop ends up owning your product's shape. [efferent](https://github.com/xandreeddev/agent) buys the step and keeps the loop.
+The *iteration* is the opposite: nothing about it is generic. The `messages` buffer is your domain entity — it's what you persist, compress, and resume from. The exit condition is product policy. The observation surface decides what your UI can ever show. Whoever owns the loop owns all four, which is why a framework that owns your loop ends up owning your product's shape. [efferent](https://github.com/xandreeddev/efferent) buys the step and keeps the loop.
 
 ## Prompt assembly: the model is stateless, the buffer is the state
 
 A thing worth saying plainly, because the "conversation" framing obscures it: chat models remember nothing between calls. Every turn, the loop re-sends *everything* — system prompt plus the entire mapped history. That's what those two `Prompt.make` lines in the skeleton are doing, every lap, from scratch.
 
-The mapping step exists because [efferent](https://github.com/xandreeddev/agent) persists its own `AgentMessage` shape rather than any provider's wire format. `toPromptMessages` translates one into the other:
+The mapping step exists because [efferent](https://github.com/xandreeddev/efferent) persists its own `AgentMessage` shape rather than any provider's wire format. `toPromptMessages` translates one into the other:
 
 ```ts title="packages/core/src/usecases/promptMapping.ts"
 export const toPromptMessages = (messages: ReadonlyArray<AgentMessage>) =>
@@ -164,7 +164,7 @@ if (hooks?.onShouldStopAfterTurn) {
 }
 ```
 
-The placement is the entire design. This hook fires at a turn *boundary* — after `generateText` has resolved the step, after the tail (tool results included) is in the buffer — and never anywhere else. The invariant being protected is **pairing validity**: providers require every assistant tool-call to be followed by its matching tool-result, and an API call against a history that breaks the pairing is a 400, not a warning. Stop *between* turns and the buffer is always a legal conversation; stop *mid-step* and you'd strand an unanswered call. [efferent](https://github.com/xandreeddev/agent)'s token budget rides exactly this hook — every sub-agent in a turn's fan-out drains one shared pool, and when it's spent:
+The placement is the entire design. This hook fires at a turn *boundary* — after `generateText` has resolved the step, after the tail (tool results included) is in the buffer — and never anywhere else. The invariant being protected is **pairing validity**: providers require every assistant tool-call to be followed by its matching tool-result, and an API call against a history that breaks the pairing is a 400, not a warning. Stop *between* turns and the buffer is always a legal conversation; stop *mid-step* and you'd strand an unanswered call. [efferent](https://github.com/xandreeddev/efferent)'s token budget rides exactly this hook — every sub-agent in a turn's fan-out drains one shared pool, and when it's spent:
 
 ```ts title="packages/core/src/usecases/buildScopeRuntime.ts"
 onShouldStopAfterTurn: () =>
@@ -251,9 +251,9 @@ One sentence on a sibling detail visible in the loop but not the skeleton: befor
 
 ## Recovery: when the model emits garbage
 
-A production loop talks to a probabilistic text generator that sometimes produces structurally invalid output. There are two distinct failure shapes, they surface at two different layers, and [efferent](https://github.com/xandreeddev/agent) recovers from both by the same principle: convert the failure into *text the model reads*, and let the loop keep looping. (Why feedback-as-text beats retry machinery — the error-writing philosophy — is a post of its own; here is just the mechanics.)
+A production loop talks to a probabilistic text generator that sometimes produces structurally invalid output. There are two distinct failure shapes, they surface at two different layers, and [efferent](https://github.com/xandreeddev/efferent) recovers from both by the same principle: convert the failure into *text the model reads*, and let the loop keep looping. (Why feedback-as-text beats retry machinery — the error-writing philosophy — is a post of its own; here is just the mechanics.)
 
-**Shape one: right tool, wrong arguments.** [efferent](https://github.com/xandreeddev/agent)'s tools declare `failureMode: 'return'`, so an ordinary handler failure — file not found, ambiguous edit — already comes back as a tool result the model reacts to. But `failureMode` only covers *handler* failures, and there's a failure zone before the handler: `@effect/ai` decodes the model's arguments against the tool's schema inside `Toolkit.handle`, and a call with a valid name but a wrong-shaped payload dies there as `AiError.MalformedOutput` — which would abort the whole turn. The fix is the wrapper you saw applied to the toolkit back in the skeleton:
+**Shape one: right tool, wrong arguments.** [efferent](https://github.com/xandreeddev/efferent)'s tools declare `failureMode: 'return'`, so an ordinary handler failure — file not found, ambiguous edit — already comes back as a tool result the model reacts to. But `failureMode` only covers *handler* failures, and there's a failure zone before the handler: `@effect/ai` decodes the model's arguments against the tool's schema inside `Toolkit.handle`, and a call with a valid name but a wrong-shaped payload dies there as `AiError.MalformedOutput` — which would abort the whole turn. The fix is the wrapper you saw applied to the toolkit back in the skeleton:
 
 ```ts title="packages/core/src/usecases/agentLoop.ts"
 const handle = (name: unknown, params: unknown) =>
@@ -317,6 +317,6 @@ Against all that: the alternative is a framework's loop, where these same invari
 
 There's a whole product category built on the premise that the agent loop is hard: graph DSLs, orchestration frameworks, platforms whose pitch is *we'll run the loop for you*. After writing one, I think the premise is backwards. The loop was an afternoon. It's 250 lines, most of which are comments explaining decisions, and the decisions are the product: where exits live, what the hooks expose, what gets persisted, what the model reads when it fumbles.
 
-Every feature [efferent](https://github.com/xandreeddev/agent) grew in its first weeks — token budgets, partial-result marking, eval bounding, an execution-tree UI, sub-agent fan-out — landed on the loop's edges, through the hook vocabulary, without touching the file. That's not because the loop is cleverly extensible. It's because the loop is *small enough to have edges*. A framework's loop has surface area instead: configuration, escape hatches, version notes about which callback fires when.
+Every feature [efferent](https://github.com/xandreeddev/efferent) grew in its first weeks — token budgets, partial-result marking, eval bounding, an execution-tree UI, sub-agent fan-out — landed on the loop's edges, through the hook vocabulary, without touching the file. That's not because the loop is cleverly extensible. It's because the loop is *small enough to have edges*. A framework's loop has surface area instead: configuration, escape hatches, version notes about which callback fires when.
 
 So my advice runs opposite the category: buy the step, own the loop. Let a library do the genuinely fiddly per-step work — schema decoding, handler dispatch, bounded concurrency — and write the while loop yourself, with the exits your product needs and the manners your model deserves. If reading one 250-line file makes the "agentic" part of your system boring, that's not a loss of magic. That's what understanding your own system feels like.
