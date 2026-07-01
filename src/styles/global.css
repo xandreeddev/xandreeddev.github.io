@@ -31,7 +31,7 @@
   --border: oklch(34% 0.014 80 / 0.45);
   --text: oklch(87% 0.012 85);
   --text-2: oklch(64% 0.015 85);
-  --text-3: oklch(51% 0.013 85);
+  --text-3: oklch(58.5% 0.013 85); /* 4.6:1 on --bg — keep small text AA */
   --accent: oklch(78% 0.125 70);
   --accent-dim: oklch(78% 0.125 70 / 0.13);
   --ok-dim: oklch(75% 0.12 150 / 0.12);
@@ -224,10 +224,6 @@ hr {
   padding-block: 0.9rem;
 }
 
-.site-nav {
-  flex-wrap: wrap;
-}
-
 .brand {
   font-family: var(--font-mono);
   font-size: 0.95rem;
@@ -244,6 +240,7 @@ hr {
 
 .site-nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1.1rem;
 }
@@ -436,12 +433,18 @@ main {
   padding-block: 3.25rem 0.25rem;
 }
 
-.intro p {
+.intro p,
+.intro .lead {
   font-size: var(--step-1);
   line-height: 1.5;
   margin: 0;
   max-width: 36rem;
   text-wrap: pretty;
+}
+
+/* the lead doubles as the homepage <h1> — dressed as body copy, not a title */
+.intro .lead {
+  font-weight: 400;
 }
 
 .intro .sub {
@@ -557,7 +560,10 @@ main {
   display: none;
 }
 
-@media (min-width: 1280px) {
+/* the rail needs 1280px of *layout* width (672 prose + 2×304 clearance), but
+   the media query measures the scrollbar too — give it headroom or the rail
+   gets shaved by overflow-x: clip */
+@media (min-width: 1330px) {
   .toc-desktop {
     display: block;
     position: absolute;
@@ -845,6 +851,8 @@ main {
 
 .prose {
   text-wrap: pretty;
+  /* long words/URLs must break — body clips overflow-x, so they'd vanish */
+  overflow-wrap: break-word;
 }
 
 .prose > :first-child {
@@ -898,6 +906,12 @@ main {
 
 .prose .anchor:hover {
   color: var(--accent);
+}
+
+/* anchor/TOC jumps shouldn't land flush against the viewport edge
+   (aurora's sticky header needs more — override in aurora.css) */
+.prose [id] {
+  scroll-margin-top: 1.25rem;
 }
 
 .prose ul,
@@ -1014,6 +1028,7 @@ main {
 /* default code palette is the dark one; light styles flip to --shiki-light */
 .astro-code span {
   color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
 }
 
 .prose pre.astro-code code {
@@ -1041,9 +1056,10 @@ main {
   background: var(--ok-dim);
 }
 
+/* gutter glyph ink: dark-plate defaults; light styles set --diff-add/--diff-del */
 .prose pre.astro-code .line.diff.add::before {
   content: '+';
-  color: oklch(70% 0.14 150);
+  color: var(--diff-add, oklch(70% 0.14 150));
 }
 
 .prose pre.astro-code .line.diff.remove {
@@ -1053,7 +1069,7 @@ main {
 
 .prose pre.astro-code .line.diff.remove::before {
   content: '−';
-  color: oklch(62% 0.17 25);
+  color: var(--diff-del, oklch(62% 0.17 25));
 }
 
 pre.astro-code[data-title]::before {
@@ -1105,6 +1121,29 @@ pre.astro-code[data-title]::before {
   .code-block .copy {
     opacity: 1;
   }
+
+  /* invisible hit extensions: pull the small chrome up to ~44px tap targets
+     without touching the visual design */
+  .site-nav a,
+  .style-btn {
+    position: relative;
+  }
+  .site-nav a::after {
+    content: '';
+    position: absolute;
+    inset: -14px -2px;
+  }
+  /* inset resolves from the padding box — the buttons' borders eat 1-2px */
+  .style-btn::after {
+    content: '';
+    position: absolute;
+    inset: -12px -10px;
+  }
+  .code-block .copy::after {
+    content: '';
+    position: absolute;
+    inset: -12px -10px;
+  }
 }
 
 @media (min-width: 900px) {
@@ -1145,4 +1184,62 @@ pre.astro-code[data-title]::before {
 
 .terminal-404 .err {
   color: var(--text-2);
+}
+
+/* ----- print: paper wins — force a light contract, drop the chrome ----- */
+
+@media print {
+  html,
+  html[data-style] {
+    color-scheme: light;
+    --bg: #fff;
+    --surface: oklch(96% 0 0);
+    --surface-2: oklch(93% 0 0);
+    --border: oklch(75% 0 0);
+    --text: oklch(15% 0 0);
+    --text-2: oklch(35% 0 0);
+    --text-3: oklch(45% 0 0);
+    --accent: oklch(40% 0.1 70);
+    --accent-dim: oklch(40% 0.1 70 / 0.1);
+    --ok-dim: oklch(60% 0.12 150 / 0.12);
+    --bad-dim: oklch(55% 0.16 25 / 0.12);
+    --diff-add: oklch(48% 0.14 150);
+    --diff-del: oklch(50% 0.17 25);
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  /* style-file body decorations (mesh, grain, scanlines, dither) */
+  body::before,
+  body::after {
+    display: none !important;
+  }
+
+  .astro-code span {
+    color: var(--shiki-light);
+    font-style: var(--shiki-light-font-style);
+  }
+
+  html[data-style] .prose pre.astro-code {
+    background: #fff !important;
+    white-space: pre-wrap;
+  }
+
+  .skip-link,
+  .style-switch,
+  .code-block .copy,
+  .toc-desktop,
+  .toc-mobile,
+  .post-nav,
+  .deco,
+  .vector-canvas,
+  .sodium-canvas,
+  .canopy-canvas,
+  .vector-hud,
+  .sodium-hud,
+  .canopy-hud {
+    display: none !important;
+  }
 }

@@ -19,7 +19,7 @@
   --border: oklch(87% 0.21 155 / 0.28);
   --text: oklch(93% 0.05 155);
   --text-2: oklch(71% 0.09 155);
-  --text-3: oklch(53% 0.07 155);
+  --text-3: oklch(56% 0.07 155); /* 4.6:1 on --bg — keep small text AA */
   --accent: oklch(87% 0.21 155);
   --accent-dim: oklch(87% 0.21 155 / 0.1);
   --ok-dim: oklch(75% 0.12 150 / 0.14);
@@ -72,8 +72,10 @@
   z-index: 1;
 }
 
-/* world mode (home with WebGL): the canvas IS the page. Content stays in the
-   accessibility tree; footer chrome gets out of the way. */
+/* world mode (home with WebGL): the canvas IS the page. The post DOM stays
+   for the world to read, but visibility pulls its links out of the tab
+   order — clipped-only main left keyboard users tabbing through invisible
+   stops. Footer chrome gets out of the way. */
 [data-style='vector'][data-world='on'] body {
   overflow: hidden;
   height: 100dvh;
@@ -86,6 +88,7 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+  visibility: hidden;
 }
 
 [data-style='vector'][data-world='on'] .site-footer {
@@ -404,6 +407,12 @@
   from {
     opacity: 0;
     transform: translateX(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-toast {
+    animation: none;
   }
 }
 
@@ -808,7 +817,8 @@
 
 /* ----- home fallback (no world running): CRT index ----- */
 
-[data-style='vector'] .intro p {
+[data-style='vector'] .intro p,
+[data-style='vector'] .intro .lead {
   font-family: var(--font-display);
   font-size: var(--step-2);
   line-height: 1.25;

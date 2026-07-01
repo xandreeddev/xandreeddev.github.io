@@ -24,6 +24,10 @@
   --ok-dim: oklch(80% 0.2 140 / 0.28);
   --bad-dim: oklch(70% 0.18 20 / 0.22);
 
+  /* diff gutter ink — the global dark defaults wash out on paper plates */
+  --diff-add: oklch(48% 0.14 150);
+  --diff-del: oklch(50% 0.17 25);
+
   --acid: oklch(91% 0.21 115);
   --ink: oklch(13% 0 0);
 
@@ -52,7 +56,10 @@
   text-decoration-thickness: 2px;
 }
 
-[data-style='zine'] a:hover {
+/* highlighter hover — inline links only: it floods the whole-card block
+   links (post rows, post-nav, series index) that style their own hovers.
+   :where keeps the specificity flat so the chrome overrides still win. */
+[data-style='zine'] a:where(:not(.post-row, .post-nav a, .series-index a)):hover {
   color: var(--ink);
   background: var(--acid);
 }
@@ -148,7 +155,8 @@
   padding-block: 3.4rem 0.75rem;
 }
 
-[data-style='zine'] .intro > p:first-child {
+[data-style='zine'] .intro > p:first-child,
+[data-style='zine'] .intro > .lead {
   display: inline;
   font-family: var(--font-display);
   font-size: var(--step-2);
@@ -345,8 +353,16 @@
   letter-spacing: 0.05em;
 }
 
-[data-style='zine'] .prose ul li::marker {
-  content: '✕ ';
+/* ✕ bullets — ::marker { content } is a no-op in Safari, so draw our own */
+[data-style='zine'] .prose ul li {
+  list-style: none;
+  position: relative;
+}
+
+[data-style='zine'] .prose ul li::before {
+  content: '✕';
+  position: absolute;
+  left: -1.25em;
   color: var(--ink);
   font-weight: 700;
 }
@@ -415,6 +431,7 @@
 /* code: white plates, hard shadows, black title tape */
 [data-style='zine'] .astro-code span {
   color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
 }
 
 [data-style='zine'] .prose pre.astro-code {

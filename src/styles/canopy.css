@@ -25,6 +25,10 @@
   --ok-dim: oklch(62% 0.14 150 / 0.14);
   --bad-dim: oklch(58% 0.18 28 / 0.12);
 
+  /* diff gutter ink — the global dark defaults wash out on the bright plates */
+  --diff-add: oklch(48% 0.14 150);
+  --diff-del: oklch(50% 0.17 25);
+
   --radius-s: 10px;
   --radius-m: 16px;
   --border-w: 2px;
@@ -167,6 +171,7 @@
 
 [data-style='canopy'] .astro-code span {
   color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
 }
 
 [data-style='canopy'] .prose pre.astro-code {
@@ -710,5 +715,9 @@
   [data-style='canopy'] .post-row:hover {
     transition: none;
     transform: none;
+  }
+  .cp-toast,
+  .canopy-hud .cp-kit span.ready {
+    animation: none;
   }
 }

@@ -24,6 +24,10 @@
   --ok-dim: oklch(55% 0.12 150 / 0.1);
   --bad-dim: oklch(55% 0.16 25 / 0.09);
 
+  /* diff gutter ink — the global dark defaults wash out on paper plates */
+  --diff-add: oklch(48% 0.14 150);
+  --diff-del: oklch(50% 0.17 25);
+
   --radius-s: 0px;
   --radius-m: 0px;
   --border-w: 1px;
@@ -94,7 +98,8 @@
   text-align: center;
 }
 
-[data-style='gazette'] .intro p {
+[data-style='gazette'] .intro p,
+[data-style='gazette'] .intro .lead {
   font-family: var(--font-display);
   font-size: var(--step-2);
   font-style: italic;
@@ -309,6 +314,7 @@
 /* code as technical matter: paper-white plates, ink rules */
 [data-style='gazette'] .astro-code span {
   color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
 }
 
 [data-style='gazette'] .prose pre.astro-code {

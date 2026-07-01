@@ -13,10 +13,11 @@ const years = [...new Set(posts.map((p) => p.data.pubDate.getUTCFullYear()))];
 >
   <div class="container">
     <section class="intro">
-      <p>
+      {/* the page's h1 — styled as the lead paragraph, not a title */}
+      <h1 class="lead">
         I'm Xand Reed. I'm building <a href="https://github.com/xandreeddev/efferent">efferent</a> — an
         open-source coding agent that lives in the terminal — on Effect.ts, in public.
-      </p>
+      </h1>
       <p class="sub">
         Notes on Effect, agents, and evals. Artifacts first, opinions later. No React.
       </p>

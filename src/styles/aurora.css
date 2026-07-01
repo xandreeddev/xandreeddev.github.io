@@ -18,7 +18,7 @@
   --border: oklch(100% 0.01 280 / 0.12);
   --text: oklch(93% 0.012 260);
   --text-2: oklch(72% 0.02 270);
-  --text-3: oklch(56% 0.025 275);
+  --text-3: oklch(57.5% 0.025 275); /* 4.5:1 on --bg — keep small text AA */
   --accent: oklch(84% 0.131 195);
   --accent-dim: oklch(84% 0.131 195 / 0.11);
   --ok-dim: oklch(75% 0.12 150 / 0.13);
@@ -114,13 +114,19 @@
     0 20px 50px oklch(0% 0 0 / 0.5);
 }
 
+/* the sticky header overlaps anchor targets — jump past it */
+[data-style='aurora'] .prose [id] {
+  scroll-margin-top: 5rem;
+}
+
 /* ----- home ----- */
 
 [data-style='aurora'] .intro {
   padding-block: 4rem 0.5rem;
 }
 
-[data-style='aurora'] .intro p {
+[data-style='aurora'] .intro p,
+[data-style='aurora'] .intro .lead {
   font-family: var(--font-display);
   font-size: var(--step-2);
   font-weight: 740;
@@ -133,7 +139,7 @@
   color: transparent;
 }
 
-[data-style='aurora'] .intro p a {
+[data-style='aurora'] .intro :is(p, .lead) a {
   color: inherit;
   text-decoration-color: oklch(84% 0.131 195 / 0.55);
   text-decoration-thickness: 2px;

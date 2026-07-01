@@ -53,16 +53,16 @@ The header switcher swaps the entire visual identity live — typography, layout
 decoration, motion — not just a palette. Choice persists in `localStorage`;
 first visit follows `prefers-color-scheme` (dark → phosphor, light → gazette).
 
-| style    | mood               | type                          |
-| -------- | ------------------ | ----------------------------- |
-| phosphor | terminal editorial | Newsreader · JetBrains Mono   |
-| gazette  | print issue        | Fraunces · Libre Franklin     |
-| aurora   | signal lab         | Syne · Hanken · Victor Mono   |
-| zine     | xerox riot         | Archivo · Space Mono          |
-| system   | retro desk         | Silkscreen · Chivo · Fragment |
-| vector   | context overworld  | VT323 · JetBrains Mono        |
-| sodium   | night drive        | Michroma · Outfit · Martian   |
-| canopy   | the deep forest    | Fredoka · Nunito · Space Mono |
+| style    | mood               | type                           |
+| -------- | ------------------ | ------------------------------ |
+| phosphor | terminal editorial | Newsreader · JetBrains Mono    |
+| gazette  | print issue        | Fraunces · Franklin · IBM Plex |
+| aurora   | signal lab         | Syne · Hanken · Victor Mono    |
+| zine     | xerox riot         | Archivo · Space Mono           |
+| system   | retro desk         | Silkscreen · Chivo · Fragment  |
+| vector   | context overworld  | VT323 · JetBrains Mono         |
+| sodium   | night drive        | Michroma · Outfit · Martian    |
+| canopy   | overworld          | Fredoka · Nunito · Space Mono  |
 
 Each style is one file in `src/styles/` overriding the token contract declared
 in `global.css` (colors, fonts, radii, border weights) plus its own signature

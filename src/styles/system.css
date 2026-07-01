@@ -18,11 +18,15 @@
   --border: oklch(22% 0.006 90);
   --text: oklch(20% 0.006 90);
   --text-2: oklch(37% 0.008 90);
-  --text-3: oklch(48% 0.008 90);
+  --text-3: oklch(47.5% 0.008 90); /* 4.5:1 on --bg — keep small text AA */
   --accent: oklch(40% 0.15 264);
   --accent-dim: oklch(40% 0.15 264 / 0.1);
   --ok-dim: oklch(60% 0.12 150 / 0.16);
   --bad-dim: oklch(58% 0.16 25 / 0.14);
+
+  /* diff gutter ink — the global dark defaults wash out on the gray panel */
+  --diff-add: oklch(48% 0.14 150);
+  --diff-del: oklch(50% 0.17 25);
 
   --ink: oklch(22% 0.006 90);
 
@@ -157,7 +161,8 @@
   padding-block: 2.9rem 0.25rem;
 }
 
-[data-style='system'] .intro p {
+[data-style='system'] .intro p,
+[data-style='system'] .intro .lead {
   font-weight: 480;
 }
 
@@ -339,6 +344,7 @@
 /* code: the gray utility panel */
 [data-style='system'] .astro-code span {
   color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
 }
 
 [data-style='system'] .prose pre.astro-code {
@@ -346,6 +352,14 @@
   border: 2px solid var(--ink);
   font-size: 0.76rem;
   line-height: 1.65;
+}
+
+/* the global ≥900px bleed is -2rem; the window pads 1.9rem — stop the code
+   plate at the padding instead of on the window border */
+@media (min-width: 900px) {
+  [data-style='system'] .prose .code-block {
+    margin-inline: -1.9rem;
+  }
 }
 
 [data-style='system'] pre.astro-code[data-title]::before {
