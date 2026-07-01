@@ -1131,7 +1131,9 @@ pre.astro-code[data-title]::before {
   .site-nav a::after {
     content: '';
     position: absolute;
-    inset: -14px -2px;
+    /* -2px horizontal left short labels ("rss") at 28px effective width;
+       -8px reaches ~44px and stays inside the gap to the style button */
+    inset: -14px -8px;
   }
   /* inset resolves from the padding box — the buttons' borders eat 1-2px */
   .style-btn::after {
@@ -1239,7 +1241,36 @@ pre.astro-code[data-title]::before {
   .canopy-canvas,
   .vector-hud,
   .sodium-hud,
-  .canopy-hud {
+  .canopy-hud,
+  .vh-return,
+  .vh-toasts,
+  .vh-toast,
+  .sd-return,
+  .sd-toasts,
+  .cp-return,
+  .cp-toasts,
+  .cp-pop {
+    /* ambient-mode game chrome is injected standalone, outside the world HUDs */
     display: none !important;
+  }
+
+  /* the token reset can't reach literal color rules (vector's HUD panel,
+     sodium/aurora glass headers) — force the paper surfaces directly */
+  html[data-style] .post-wrap,
+  html[data-style] .page,
+  html[data-style] .site-header {
+    background: #fff !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  html[data-style] .post-wrap::before,
+  html[data-style] .page::before {
+    content: none !important;
+  }
+
+  html[data-style] * {
+    text-shadow: none !important;
   }
 }
