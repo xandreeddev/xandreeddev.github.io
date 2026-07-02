@@ -2540,8 +2540,9 @@ export function mount() {
             return;
           }
           /* any real mouse may lock — including a trackpad on an iPad,
-             where the device still reports pointer: coarse */
-          if (e.pointerType === 'mouse') el.requestPointerLock?.();
+             where the device still reports pointer: coarse (returns a
+             promise in Chrome — swallow the denied/sandboxed rejection) */
+          if (e.pointerType === 'mouse') el.requestPointerLock?.()?.catch?.(() => {});
         }
       },
       { signal },

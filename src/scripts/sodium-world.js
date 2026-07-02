@@ -2318,6 +2318,7 @@ export function mount() {
   let lampCullT = 9; // force an immediate first cull pass
   let crashCd = 0; // collision thud debounce
   let prevVy = 0;
+  let flipT = 0; // dwell inverted-and-slow before the roof rescue fires
 
   const fwdOf = (a, out) => out.set(Math.sin(a), 0, Math.cos(a));
 
@@ -2429,12 +2430,21 @@ export function mount() {
       shake = Math.min(1, shake + 0.5);
     }
 
-    /* lake: splash + reset; flipped onto the roof: same rescue */
+    /* lake: splash + reset; flipped onto the roof: same rescue. NOT gated on
+       !airborne — a roof-parked car has zero wheels on ground, so it counts
+       as airborne forever and the rescue would never fire. A short dwell
+       keeps mid-air rolls (which carry speed) from triggering it. */
     if (radial < LAKE_R - 2) resetToRoad();
-    else if (!airborne && tmpV2.set(0, 1, 0).applyQuaternion(car.quaternion).y < -0.45 && speed < 3) {
-      const a = Math.atan2(car.position.z, car.position.x);
-      placeCar(car.position.x, car.position.z, a + Math.PI / 2);
-      hud?.toast('back on your wheels');
+    else if (tmpV2.set(0, 1, 0).applyQuaternion(car.quaternion).y < -0.45 && speed < 3) {
+      flipT += dt;
+      if (flipT > 1.5) {
+        flipT = 0;
+        const a = Math.atan2(car.position.z, car.position.x);
+        placeCar(car.position.x, car.position.z, a + Math.PI / 2);
+        hud?.toast('back on your wheels');
+      }
+    } else {
+      flipT = 0;
     }
 
     /* resting cones are instances — promote to a live prop on contact */

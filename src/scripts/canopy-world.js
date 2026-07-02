@@ -2591,8 +2591,11 @@ export function mount() {
     const arena = arenas[foe.zone];
     if (!samezone) {
       if (foe.state !== 'dormant') {
-        /* player fled — the ogre stomps home and shakes it off */
+        /* player fled — the ogre stomps home and shakes it off, WOUNDS
+           INCLUDED: leaving the arena resets the boss, no chip-and-run */
         foe.state = 'dormant';
+        foe.hp = foe.maxHp;
+        foe.enraged = false;
         foe.group.position.set(arena.ox, 0, -6);
         foe.anim.play('idle');
         if (hud?.els) hud.els.bossbar.hidden = true;
@@ -2920,8 +2923,10 @@ export function mount() {
           attackPress();
         } else {
           /* acquiring click — if the lock lands, the drag is dropped and
-             no attack fires; if it's denied, drag-orbit still works */
-          if (e.pointerType === 'mouse') el.requestPointerLock?.();
+             no attack fires; if it's denied, drag-orbit still works
+             (returns a promise in Chrome — swallow the sandboxed-context
+             rejection so it can't surface as an unhandled page error) */
+          if (e.pointerType === 'mouse') el.requestPointerLock?.()?.catch?.(() => {});
           if (drag.id < 0) {
             drag.id = e.pointerId;
             drag.lx = e.clientX;
